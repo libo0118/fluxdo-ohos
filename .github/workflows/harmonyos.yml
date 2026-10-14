@@ -1,0 +1,158 @@
+name: HarmonyOS HAP (experimental)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/harmonyos.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: harmonyos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: ErBWs/setup-ohos@v2.0.0
+        with:
+          version: 26.0.0.821
+          cache: true
+      - name: Install Flutter for OpenHarmony
+        run: |
+          set -euo pipefail
+          git clone --depth 1 -b '3.44.9+ohos-0.0.1-canary1' https://gitcode.com/CPF-Flutter/flutter_flutter.git "$RUNNER_TOOL_CACHE/flutter-ohos"
+          git -C "$RUNNER_TOOL_CACHE/flutter-ohos" tag 3.44.10
+          curl -fsSL https://raw.githubusercontent.com/libo0118/FlClash-ohos/e1be0a8a615e0a2829f3bc46d7a4042ca189823e/.github/flutter_ohos.patch -o "$RUNNER_TEMP/flutter_ohos.patch"
+          git -C "$RUNNER_TOOL_CACHE/flutter-ohos" apply "$RUNNER_TEMP/flutter_ohos.patch"
+          echo "$RUNNER_TOOL_CACHE/flutter-ohos/bin" >> "$GITHUB_PATH"
+          echo "$RUNNER_TOOL_CACHE/flutter-ohos/bin/cache/dart-sdk/bin" >> "$GITHUB_PATH"
+      - name: Select OHOS plugin implementations
+        run: |
+          set -euo pipefail
+          cat > pubspec_overrides.yaml <<'YAML'
+          dependency_overrides:
+            device_info_plus:
+              git:
+                url: https://github.com/tljk/plus_plugins.git
+                path: packages/device_info_plus/device_info_plus
+                ref: main
+            package_info_plus:
+              git:
+                url: https://github.com/tljk/plus_plugins.git
+                path: packages/package_info_plus/package_info_plus
+                ref: main
+            connectivity_plus:
+              git:
+                url: https://github.com/tljk/plus_plugins.git
+                path: packages/connectivity_plus/connectivity_plus
+                ref: main
+            path_provider:
+              git:
+                url: https://gitcode.com/openharmony-tpc/flutter_packages.git
+                path: packages/path_provider/path_provider
+                ref: br_path_provider-v2.1.5_ohos
+            shared_preferences:
+              git:
+                url: https://gitcode.com/openharmony-tpc/flutter_packages.git
+                path: packages/shared_preferences/shared_preferences
+                ref: br_shared_preferences-v2.5.3_ohos
+            url_launcher:
+              git:
+                url: https://gitcode.com/openharmony-tpc/flutter_packages.git
+                path: packages/url_launcher/url_launcher
+                ref: br_url_launcher-v6.3.2_ohos
+            image_picker:
+              git:
+                url: https://gitcode.com/openharmony-tpc/flutter_packages.git
+                path: packages/image_picker/image_picker
+                ref: br_image_picker-v1.2.1_ohos
+            app_links:
+              git:
+                url: https://gitcode.com/CPF-Flutter/fluttertpc_app_links.git
+                path: app_links
+                ref: br_v7.0.0_ohos
+            mobile_scanner:
+              git:
+                url: https://github.com/tljk/mobile_scanner.git
+                ref: v7.4.0-fix-ohos
+            flutter_js:
+              git:
+                url: https://github.com/tljk/flutter_js.git
+                ref: master
+            dynamic_color:
+              git:
+                url: https://gitcode.com/CPF-Flutter/fluttertpc_dynamic_color.git
+                path: packages/dynamic_color
+                ref: dev
+            flutter_inappwebview:
+              git:
+                url: https://gitcode.com/openharmony-sig/flutter_inappwebview.git
+                path: flutter_inappwebview
+                ref: a281ae3272a9218760d52b95014a71a41866bd6c
+            flutter_rust_bridge: 2.12.0
+          YAML
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('pubspec.yaml')
+          source = p.read_text()
+          marker = '\ndependencies:\n'
+          assert source.count(marker) == 1
+          source = source.replace(marker, marker + '''  flutter_secure_storage_ohos:
+              git:
+                url: https://github.com/ClosedHarmony/flutter_secure_storage_ohos.git
+                ref: 545fb022eed8ce7891028d4851a617b9a8328177
+          ''', 1)
+          p.write_text(source)
+          PY
+      - name: Create HarmonyOS target and resolve packages
+        run: |
+          set -euo pipefail
+          flutter --version
+          flutter create --platforms=ohos --org=com.github.libo0118 --project-name=fluxdo --no-pub .
+          flutter pub get 2>&1 | tee pub-get-ohos.log
+          dart tool/project_prep.dart test
+      - name: Compile the original Flutter application to HAP
+        run: |
+          set -euo pipefail
+          flutter build hap --release --no-codesign 2>&1 | tee build-ohos.log
+          mkdir -p dist
+          find ohos/entry/build -type f -name '*.hap' -exec cp '{}' dist/ \;
+          test -n "$(find dist -maxdepth 1 -name '*.hap' -print -quit)"
+          printf 'Source: %s\nSigning: unsigned\nStatus: experimental; device, login and native feature validation pending\n' "$GITHUB_SHA" > dist/BUILD-INFO.txt
+          git -C "$RUNNER_TOOL_CACHE/flutter-ohos" rev-parse HEAD >> dist/BUILD-INFO.txt
+          cp pubspec.lock dist/pubspec.lock
+          sha256sum dist/*.hap > dist/SHA256SUMS
+      - name: Upload unsigned experimental HAP
+        uses: actions/upload-artifact@v4
+        with:
+          name: fluxdo-ohos-unsigned-experimental
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Collect build diagnostics
+        if: always()
+        run: |
+          mkdir -p diagnostics
+          git diff --binary > diagnostics/generated-source.patch
+          cp pubspec_overrides.yaml diagnostics/ 2>/dev/null || true
+          cp pubspec.lock diagnostics/ 2>/dev/null || true
+          cp *-ohos.log diagnostics/ 2>/dev/null || true
+          if [ -d ohos ]; then tar --exclude='node_modules' --exclude='oh_modules' --exclude='build' -czf diagnostics/ohos-project.tar.gz ohos; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fluxdo-ohos-build-diagnostics
+          path: diagnostics/
+          if-no-files-found: error
+          retention-days: 7

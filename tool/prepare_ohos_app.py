@@ -56,14 +56,14 @@ REPLACEMENTS = {
 }
 
 
-def replace_once(content, before, after, relative_path):
+def replace_once(content, before, after, relative_path, expected=1):
     newline = "\r\n" if b"\r\n" in content else "\n"
     before = before.replace("\n", newline).encode("utf-8")
     after = after.replace("\n", newline).encode("utf-8")
     count = content.count(before)
-    if count != 1:
-        raise AssertionError(f"{relative_path}: 应精确匹配 1 处，实际为 {count} 处")
-    return content.replace(before, after, 1)
+    if count != expected:
+        raise AssertionError(f"{relative_path}: 应精确匹配 {expected} 处，实际为 {count} 处")
+    return content.replace(before, after)
 
 
 if __name__ == "__main__":
@@ -78,6 +78,22 @@ if __name__ == "__main__":
         for before, after in replacements:
             content = replace_once(content, before, after, relative_path)
         prepared[path] = content
+    # FilePicker 12 改为静态 API 且默认多选，保留原有入口的单选语义。
+    picker_sites = {
+        "lib/pages/data_management_page.dart": (1, "pickFiles", True),
+        "lib/utils/share_utils.dart": (2, "saveFile", False),
+        "lib/pages/chat/channel/_chat_composer.dart": (1, "pickFiles", False),
+        "lib/widgets/markdown_editor/rich_composer/rich_composer_editor.dart": (2, "pickFiles", True),
+        "lib/widgets/markdown_editor/markdown_toolbar.dart": (1, "pickFiles", True),
+        "lib/widgets/markdown_editor/media_upload_helper.dart": (1, "pickFiles", True),
+    }
+    for relative_path, (expected, method, single) in picker_sites.items():
+        path = repo / relative_path
+        replacement = f"FilePicker.{method}(" + ("allowMultiple: false, " if single else "")
+        prepared[path] = replace_once(
+            path.read_bytes(), f"FilePicker.platform.{method}(", replacement,
+            relative_path, expected,
+        )
     for path, content in prepared.items():
         path.write_bytes(content)
         print(f"已准备 {path.relative_to(repo)}")

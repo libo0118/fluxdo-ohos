@@ -6,6 +6,7 @@ import fileShare from '@ohos.fileshare';
 import photoAccessHelper from '@ohos.file.photoAccessHelper';
 import pasteboard from '@ohos.pasteboard';
 import image from '@ohos.multimedia.image';
+import util from '@ohos.util';
 import utd from '@ohos.data.uniformTypeDescriptor';
 import systemShare from '@hms.collaboration.systemShare';
 import { MethodCall, MethodChannel } from '@ohos/flutter_ohos';
@@ -13,6 +14,7 @@ import { FlutterPlugin, FlutterPluginBinding } from '@ohos/flutter_ohos/src/main
 import { MethodCallHandler, MethodResult } from '@ohos/flutter_ohos/src/main/ets/plugin/common/MethodChannel';
 
 const IMAGE_TYPES: Array<string> = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+const READ_IMAGE_TYPES: Array<string> = IMAGE_TYPES.concat(['image/avif', 'image/svg+xml']);
 
 class FilesError extends Error {
   constructor(readonly code: string, message: string) { super(message); }
@@ -198,7 +200,7 @@ export default class FluxdoSystemFilesPlugin implements FlutterPlugin, MethodCal
     if (permission.authResults[0] !== 0) throw new FilesError('PERMISSION_DENIED', '未授权读取剪贴板。');
     const data = await pasteboard.getSystemPasteboard().getData();
     const values = new Map<string, Object>();
-    const types = IMAGE_TYPES.concat([pasteboard.MIMETYPE_TEXT_HTML, pasteboard.MIMETYPE_TEXT_PLAIN, pasteboard.MIMETYPE_PIXELMAP]);
+    const types = READ_IMAGE_TYPES.concat([pasteboard.MIMETYPE_TEXT_HTML, pasteboard.MIMETYPE_TEXT_PLAIN, pasteboard.MIMETYPE_PIXELMAP]);
     for (let index = 0; index < data.getRecordCount(); index++) {
       const record = data.getRecord(index);
       const present = record.getValidTypes(types);
@@ -206,8 +208,18 @@ export default class FluxdoSystemFilesPlugin implements FlutterPlugin, MethodCal
         const value = await record.getData(type);
         if (type === pasteboard.MIMETYPE_TEXT_HTML && typeof value === 'string' && !values.has('html')) values.set('html', value);
         else if (type === pasteboard.MIMETYPE_TEXT_PLAIN && typeof value === 'string' && !values.has('text')) values.set('text', value);
-        else if (IMAGE_TYPES.includes(type) && value instanceof ArrayBuffer && !values.has('bytes')) {
-          values.set('bytes', new Uint8Array(value)); values.set('mimeType', type);
+        else if (READ_IMAGE_TYPES.includes(type) && !values.has('bytes')) {
+          let bytes: Uint8Array | null = null;
+          if (value instanceof ArrayBuffer) bytes = new Uint8Array(value);
+          else if (type === 'image/svg+xml' && typeof value === 'string') {
+            if (value.length > 4 * 1024 * 1024) throw new FilesError('IMAGE_TOO_LARGE', '剪贴板图片过大。');
+            bytes = new util.TextEncoder().encodeInto(value);
+          }
+          if (bytes !== null) {
+            const limit = type === 'image/svg+xml' ? 4 * 1024 * 1024 : 32 * 1024 * 1024;
+            if (bytes.length === 0 || bytes.length > limit) throw new FilesError('INVALID_ARGS', '剪贴板图片大小无效。');
+            values.set('bytes', bytes); values.set('mimeType', type);
+          }
         }
       }
     }

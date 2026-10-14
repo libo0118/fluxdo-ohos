@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 import 'package:flutter/foundation.dart';
@@ -198,6 +199,7 @@ class DohProxyFfi {
   Pointer<Utf8> Function()? _dohProxyDnsCacheStats;
   Pointer<Utf8> Function()? _dohProxyDnsCacheRecords;
   Pointer<Utf8> Function()? _dohProxyGenerateCa;
+  int Function(Pointer<Utf8>, Pointer<Uint8>, int)? _dohProxyMatchesCurrentLeaf;
   Pointer<Utf8> Function()? _dohProxyGetEmbeddedCaPem;
   int Function()? _dohProxyTakeAuthRejected;
   Pointer<Utf8> Function()? _dohProxyTakeAccelUpdate;
@@ -349,6 +351,14 @@ class DohProxyFfi {
       }
 
       // doh_proxy_generate_ca 是新增符号，旧版本库可能没有，可选绑定
+      try {
+        _dohProxyMatchesCurrentLeaf = _lib!
+            .lookup<NativeFunction<Int32 Function(Pointer<Utf8>, Pointer<Uint8>, UintPtr)>>(
+              'doh_proxy_matches_current_leaf',
+            ).asFunction();
+      } catch (_) {
+        _dohProxyMatchesCurrentLeaf = null;
+      }
       try {
         _dohProxyGenerateCa = _lib!
             .lookup<NativeFunction<Pointer<Utf8> Function()>>(
@@ -559,6 +569,23 @@ class DohProxyFfi {
       return _dohProxyStartWithConfigJson(configPtr);
     } finally {
       calloc.free(configPtr);
+    }
+  }
+
+  /// Read-only comparison against the active proxy's already issued leaf.
+  bool matchesCurrentLeaf(String host, Uint8List leaf) {
+    if (leaf.isEmpty || leaf.length > 16 * 1024 || host.contains('\u0000')) return false;
+    if (!_initialized && !initialize()) return false;
+    final match = _dohProxyMatchesCurrentLeaf;
+    if (match == null) return false;
+    final hostPtr = host.toNativeUtf8();
+    final leafPtr = calloc<Uint8>(leaf.length);
+    try {
+      leafPtr.asTypedList(leaf.length).setAll(0, leaf);
+      return match(hostPtr, leafPtr, leaf.length) == 1;
+    } finally {
+      calloc.free(hostPtr);
+      calloc.free(leafPtr);
     }
   }
 

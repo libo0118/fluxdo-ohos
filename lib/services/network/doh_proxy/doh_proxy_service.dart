@@ -772,6 +772,21 @@ class DohProxyService {
     });
   }
 
+  Future<bool> matchesCurrentLeaf(String host, Uint8List leaf) async {
+    if (!DohProxyFfi.isAvailable || !isRunning || leaf.isEmpty || leaf.length > 16 * 1024) return false;
+    return _enqueueFfiOp(() async {
+      final sendPort = await _ensureFfiIsolate();
+      final response = ReceivePort();
+      try {
+        sendPort.send({'cmd': 'matches_current_leaf', 'host': host, 'leaf': leaf, 'replyTo': response.sendPort});
+        final result = await response.first;
+        return result is Map && result['match'] == true;
+      } finally {
+        response.close();
+      }
+    });
+  }
+
   Future<Uint8List?> lookupEchConfig(String host, String dohServer) async {
     if (!DohProxyFfi.isAvailable) {
       return DohProxyFfi.instance.lookupEchConfig(host, dohServer);
@@ -1489,6 +1504,11 @@ void _ffiIsolateEntry(SendPort mainSendPort) {
           } else {
             replyTo.send({'ok': false, 'error': 'generate_ca failed'});
           }
+          return;
+        case 'matches_current_leaf':
+          final host = message['host'] as String? ?? '';
+          final leaf = message['leaf'];
+          replyTo.send({'match': leaf is Uint8List && DohProxyFfi.instance.matchesCurrentLeaf(host, leaf)});
           return;
         case 'clear_dns_cache':
           final ok = DohProxyFfi.instance.clearDnsCache();

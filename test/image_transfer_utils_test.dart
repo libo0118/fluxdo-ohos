@@ -27,13 +27,22 @@ void main() {
       '<svg xmlns="http://www.w3.org/2000/svg" width="4" height="3" viewBox="0 0 4 3">'
       '<rect width="4" height="3" fill="#ff0000"/></svg>',
     ));
-    final (png, extension) = await prepareSystemImage(bytes);
+    final (png, extension) = await prepareSystemImage(bytes, expectedMimeType: 'image/svg+xml');
     expect(extension, 'png');
     final decoded = image.decodePng(png)!;
     expect((decoded.width, decoded.height), (4, 3));
     expect(decoded.getPixel(1, 1).r, 255);
     expect(decoded.getPixel(1, 1).g, 0);
     expect(decoded.getPixel(1, 1).a, 255);
+  });
+
+  test('剪贴板 AVIF/SVG 声明必须与真实文件格式一致', () async {
+    final png = Uint8List.fromList([0x89, 0x50, 0x4e, 0x47, 13, 10, 26, 10]);
+    for (final mime in ['image/avif', 'image/svg+xml']) {
+      await expectLater(prepareSystemImage(png, expectedMimeType: mime), throwsFormatException);
+    }
+    final invalidAvif = Uint8List.fromList(ascii.encode('0000ftypavif0000'));
+    await expectLater(prepareSystemImage(invalidAvif, expectedMimeType: 'image/avif'), throwsFormatException);
   });
 
   test('空数据、非法图片和过大 SVG 明确失败', () async {

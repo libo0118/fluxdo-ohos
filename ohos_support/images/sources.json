@@ -1,0 +1,27 @@
+{
+  "animated": {
+    "repository": "Lingyan000/native_animated_image",
+    "revision": "6a35d2cfb41332409102b941e5d937788c61e062",
+    "sha256": "2d949ad578f4f7fee2a4b59ca7a1fd9c75bab046b0368de65eb47d9dec05d52d"
+  },
+  "avif": {
+    "repository": "yekeskin/flutter_avif",
+    "revision": "513c918e4f881a1c08600149a56ac2e604863f79",
+    "sha256": "9218d58bc0039e4d62717a5998471c27e3a3cc1abbd4fa86c2f57296ebb82587"
+  },
+  "libavif-rs": {
+    "repository": "yekeskin/libavif-rs",
+    "revision": "519cb3ea526d3a7316face89f52bcbb2c432ec9e",
+    "sha256": "85ce6d5837ab2bc73040209073b1133231231ff62fa6ce2fd912b34ad5ed946b"
+  },
+  "libavif-c": {
+    "repository": "AOMediaCodec/libavif",
+    "revision": "6ab53189045e7a6fe0bd93d14977b2a4f8efa5e9",
+    "sha256": "172611a27b8a5df2ad01b5ae4023959d33a1e623d3344612519ae9dbb3f1d0a5"
+  },
+  "dav1d-c": {
+    "repository": "videolan/dav1d",
+    "revision": "99172b11470776177939c3d2bc366fe8d904eab7",
+    "sha256": "96a4d01f6bcc6784b8bb8605d2c57e1a214a49eacab746fc7937cd5d616b79c2"
+  }
+}

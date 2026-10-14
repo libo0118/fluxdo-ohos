@@ -388,7 +388,7 @@ class DohProxyFfi {
 
   DynamicLibrary? _loadLibrary() {
     try {
-      if (Platform.isAndroid) {
+      if (Platform.isAndroid || Platform.operatingSystem == 'ohos') {
         return DynamicLibrary.open('libdoh_proxy.so');
       } else if (Platform.isIOS) {
         // iOS uses static linking, so we use the process itself
@@ -950,6 +950,7 @@ class DohProxyFfi {
   /// Check if FFI is available on this platform
   static bool get isAvailable {
     return Platform.isAndroid ||
+        Platform.operatingSystem == 'ohos' ||
         Platform.isIOS ||
         Platform.isMacOS ||
         Platform.isWindows;

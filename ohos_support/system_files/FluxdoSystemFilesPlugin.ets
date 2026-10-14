@@ -17,7 +17,11 @@ const IMAGE_TYPES: Array<string> = ['image/png', 'image/jpeg', 'image/gif', 'ima
 const READ_IMAGE_TYPES: Array<string> = IMAGE_TYPES.concat(['image/avif', 'image/svg+xml']);
 
 class FilesError extends Error {
-  constructor(readonly code: string, message: string) { super(message); }
+  readonly code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.code = code;
+  }
 }
 
 export default class FluxdoSystemFilesPlugin implements FlutterPlugin, MethodCallHandler {
@@ -184,13 +188,13 @@ export default class FluxdoSystemFilesPlugin implements FlutterPlugin, MethodCal
           selectionMode: systemShare.SelectionMode.SINGLE,
           previewMode: systemShare.SharePreviewMode.DEFAULT,
         });
-      } catch (error) { dismiss(); throw error; }
+      } catch (error) { dismiss(); throw error as Error; }
       // 仅表示系统分享面板已显示，不表示接收应用完成接收。
       return true;
     } catch (error) {
       this.shareController = null;
       this.sharing = false;
-      throw error;
+      throw error as Error;
     }
   }
 

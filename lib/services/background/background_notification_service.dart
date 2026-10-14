@@ -1,8 +1,11 @@
+import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 import '../../l10n/s.dart';
 import 'notification_task_handler.dart';
+import '../message_bus_service.dart';
 
 /// 后台通知统一管理入口
 ///
@@ -15,6 +18,9 @@ class BackgroundNotificationService {
 
   bool _enabled = false;
   bool _androidInited = false;
+  int _ohosGeneration = 0;
+  static const _ohosChannel = MethodChannel('com.fluxdo/notifications');
+  bool get _isOhos => Platform.operatingSystem == 'ohos';
 
   /// 初始化（在 main() 中调用一次）
   Future<void> initialize() async {}
@@ -22,6 +28,26 @@ class BackgroundNotificationService {
   /// 启用后台通知（App 切后台时调用）
   Future<void> enable(int userId) async {
     if (_enabled) return;
+    if (_isOhos) {
+      if (!MessageBusService().isPolling) {
+        handleOhosExpired();
+        return;
+      }
+      final generation = ++_ohosGeneration;
+      try {
+        final budget = await _ohosChannel.invokeMapMethod<String, dynamic>('beginBackground');
+        if (generation != _ohosGeneration) {
+          await _ohosChannel.invokeMethod<void>('endBackground', {'requestId': budget?['requestId']});
+          return;
+        }
+        _enabled = budget?['remainingMs'] is num && (budget!['remainingMs'] as num) > 0;
+        if (!_enabled) handleOhosExpired();
+      } catch (error) {
+        if (generation == _ohosGeneration) handleOhosExpired();
+        debugPrint('[BackgroundNotification] 系统未提供短时后台额度: $error');
+      }
+      return;
+    }
     _enabled = true;
     debugPrint('[BackgroundNotification] 启用后台通知, userId=$userId');
     await _startAndroidForegroundService();
@@ -29,6 +55,12 @@ class BackgroundNotificationService {
 
   /// 禁用后台通知（App 回前台时调用）
   Future<void> disable() async {
+    if (_isOhos) {
+      _ohosGeneration++;
+      _enabled = false;
+      await _ohosChannel.invokeMethod<void>('endBackground');
+      return;
+    }
     if (!_enabled) return;
     _enabled = false;
     debugPrint('[BackgroundNotification] 禁用后台通知');
@@ -36,6 +68,14 @@ class BackgroundNotificationService {
   }
 
   bool get isEnabled => _enabled;
+
+  /// 系统额度到期后不再发请求；前台恢复时保留的频道及 cursor 继续使用。
+  void handleOhosExpired() {
+    if (!_isOhos) return;
+    _ohosGeneration++;
+    _enabled = false;
+    MessageBusService().pauseForOhosBackground();
+  }
 
   void _initAndroidForegroundTask() {
     FlutterForegroundTask.init(

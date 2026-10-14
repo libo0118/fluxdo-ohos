@@ -32,7 +32,9 @@ ohos_native_env "$repo"
 CARGO_TARGET_DIR="$work/doh" cargo "+$rust_version" build \
   --manifest-path "$repo/core/doh_proxy/Cargo.toml" --locked --release --lib \
   --target "$target" --features ech
-CARGO_TARGET_DIR="$work/rhttp" cargo "+$rust_version" build \
+# 上游 rhttp 开启 HTTP/3，需要保留 reqwest 的显式构建开关。
+CARGO_TARGET_AARCH64_UNKNOWN_LINUX_OHOS_RUSTFLAGS="${CARGO_TARGET_AARCH64_UNKNOWN_LINUX_OHOS_RUSTFLAGS:-} --cfg reqwest_unstable" \
+  CARGO_TARGET_DIR="$work/rhttp" cargo "+$rust_version" build \
   --manifest-path "$rhttp/rust/Cargo.toml" --locked --release --lib --target "$target"
 
 out="$repo/ohos/entry/libs/arm64-v8a"

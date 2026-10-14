@@ -54,6 +54,7 @@ import '../../../services/discourse_cook_service.dart';
 import '../../../services/emoji_alias_service.dart';
 import '../../../services/emoji_handler.dart';
 import '../../../utils/clipboard_image_native.dart';
+import '../../../utils/clipboard_utils.dart';
 import '../../../utils/dialog_utils.dart';
 import '../../../utils/fluxdo_render_callbacks.dart';
 import '../../../utils/link_launcher.dart';
@@ -1995,6 +1996,21 @@ class RichComposerEditorState extends State<RichComposerEditor> {
   ///
   /// 任一步落空返回 null,FluxdoEditor 回落纯文本路径 —— 内容不丢。
   Future<List<EditorBlock>?> _importRichPaste() async {
+    if (ClipboardUtils.isOhos) {
+      try {
+        final content = await ClipboardUtils.readOhos();
+        if (content.html != null) {
+          final md = clipboardHtmlToMarkdown(content.html!);
+          return md == null ? null : markdownToDoc(md);
+        }
+        if (content.text == null && content.image?.isNotEmpty == true && content.extension != null) {
+          unawaited(_uploadPastedImage(content.image!, content.extension!));
+        }
+      } catch (_) {
+        // 拒绝读取剪贴板时回落到系统文本粘贴。
+      }
+      return null;
+    }
     final clipboard = SystemClipboard.instance;
     if (clipboard == null) return null; // 平台无系统剪贴板访问
     final reader = await clipboard.read();

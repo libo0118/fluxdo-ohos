@@ -10,7 +10,7 @@ extension _PostFooterMenuActions on _PostFooterSectionState {
       username: username,
       anonymousShare: ref.read(preferencesProvider).anonymousShare,
     );
-    await SharePlus.instance.share(ShareParams(text: url));
+    await ShareUtils.shareText(url);
   }
 
   void _showFlagDialog(BuildContext context) {

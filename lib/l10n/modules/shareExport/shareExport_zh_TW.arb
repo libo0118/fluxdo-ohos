@@ -70,6 +70,8 @@
   "export_deliverSaveAs": "另存為…",
   "export_deliverSaveAsDesc": "自己選儲存位置",
   "export_deliverShare": "分享",
+  "export_shareStarted": "已發起分享",
+  "exportHistory_shareInitiatedNoFile": "已開啟分享面板，未確認送達，本機沒有儲存檔案",
   "export_deliverShareDesc": "透過系統分享面板傳送",
   "export_deliverNotion": "同步到 Notion",
   "export_deliverNotionDesc": "建立為 Notion 頁面",

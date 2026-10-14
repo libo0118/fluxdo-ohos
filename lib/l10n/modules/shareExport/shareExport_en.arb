@@ -25,6 +25,8 @@
   "export_deliverSaveAs": "Save as…",
   "export_deliverSaveAsDesc": "Pick the location yourself",
   "export_deliverShare": "Share",
+  "export_shareStarted": "Sharing started",
+  "exportHistory_shareInitiatedNoFile": "The share sheet was opened; delivery is unconfirmed and no local file was saved",
   "export_deliverShareDesc": "Send via the system share sheet",
   "export_deliverNotion": "Sync to Notion",
   "export_deliverNotionDesc": "Create as a Notion page",

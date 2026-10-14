@@ -1,0 +1,260 @@
+--- a/src/cert.rs
++++ b/src/cert.rs
+@@ -20,6 +20,23 @@
+ /// This is generated once and bundled with the app
+ const CA_CERT_PEM: &str = include_str!("../certs/ca.crt");
+ const CA_KEY_PEM: &str = include_str!("../certs/ca.key");
++
++struct CachedCertificate {
++    config: Arc<ServerConfig>,
++    leaf_der: Vec<u8>,
++    not_before: time::OffsetDateTime,
++    not_after: time::OffsetDateTime,
++}
++
++pub(crate) fn canonical_dns_host(host: &str) -> Option<String> {
++    let host = host.strip_suffix('.').unwrap_or(host);
++    if host.is_empty() || host.len() > 253 || !host.is_ascii()
++        || host.parse::<std::net::IpAddr>().is_ok() { return None; }
++    if host.split('.').any(|label| label.is_empty() || label.len() > 63
++        || label.starts_with('-') || label.ends_with('-')
++        || !label.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')) { return None; }
++    Some(host.to_ascii_lowercase())
++}
+ 
+ /// Certificate manager for MITM proxy
+ pub struct CertManager {
+@@ -36,7 +53,8 @@
+     /// 是否在叶子证书 ALPN 中提供 h2（启用 h2 MITM 时为 true）
+     h2_mitm: bool,
+     /// Cache of generated certificates
+-    cert_cache: RwLock<HashMap<String, Arc<ServerConfig>>>,
++    cert_cache: RwLock<HashMap<String, CachedCertificate>>,
++    ca_validity: (time::OffsetDateTime, time::OffsetDateTime),
+     /// Crypto provider for rustls
+     crypto_provider: Arc<rustls::crypto::CryptoProvider>,
+ }
+@@ -51,9 +69,10 @@
+             .map_err(|e| DohProxyError::Certificate(format!("Failed to parse CA key: {}", e)))?;
+ 
+         // 从 PEM 解析参数后用同一个 key 重建 Certificate 对象（rcgen 签发叶子证书需要）
+-        let ca_cert = CertificateParams::from_ca_cert_pem(CA_CERT_PEM)
+-            .map_err(|e| DohProxyError::Certificate(format!("Failed to parse CA cert: {}", e)))?
+-            .self_signed(&ca_key_pair)
++        let ca_params = CertificateParams::from_ca_cert_pem(CA_CERT_PEM)
++            .map_err(|e| DohProxyError::Certificate(format!("Failed to parse CA cert: {}", e)))?;
++        let ca_validity = (ca_params.not_before, ca_params.not_after);
++        let ca_cert = ca_params.self_signed(&ca_key_pair)
+             .map_err(|e| DohProxyError::Certificate(format!("Failed to load CA cert: {}", e)))?;
+ 
+         // 使用重建后的证书 DER，确保和 signed_by 使用的 issuer 一致
+@@ -73,6 +92,7 @@
+             ca_key_pair,
+             ca_cert,
+             ca_cert_der,
++            ca_validity,
+             leaf_key_pair,
+             leaf_key_der,
+             h2_mitm,
+@@ -83,33 +103,37 @@
+ 
+     /// Get or create a server config for the given hostname
+     pub fn get_server_config(&self, hostname: &str) -> Result<Arc<ServerConfig>> {
+-        // Check cache first
+-        {
+-            let cache = self.cert_cache.read();
+-            if let Some(config) = cache.get(hostname) {
+-                debug!("Using cached certificate for {}", hostname);
+-                return Ok(config.clone());
+-            }
++        let hostname = canonical_dns_host(hostname).or_else(||
++            hostname.parse::<std::net::IpAddr>().ok().map(|_| hostname.to_string()))
++            .ok_or_else(|| DohProxyError::Certificate("Invalid DNS hostname".into()))?;
++        // Keep the first issued leaf stable while concurrent TLS requests are in flight.
++        let mut cache = self.cert_cache.write();
++        if let Some(entry) = cache.get(&hostname) {
++            return Ok(entry.config.clone());
+         }
+-
+-        // Generate new certificate
+-        debug!("Generating certificate for {}", hostname);
+-        let config = self.generate_cert_config(hostname)?;
+-        let config = Arc::new(config);
+-
+-        // Cache it
+-        {
+-            let mut cache = self.cert_cache.write();
+-            cache.insert(hostname.to_string(), config.clone());
+-        }
+-
++        let entry = self.generate_cert_config(&hostname, time::OffsetDateTime::now_utc())?;
++        let config = entry.config.clone();
++        cache.insert(hostname, entry);
+         Ok(config)
+     }
+ 
++    /// Read-only: never mint a certificate while deciding a WebView exception.
++    pub fn matches_cached_leaf(&self, hostname: &str, leaf: &[u8]) -> bool {
++        let Some(hostname) = canonical_dns_host(hostname) else { return false; };
++        if leaf.is_empty() || leaf.len() > 16 * 1024 { return false; }
++        let now = time::OffsetDateTime::now_utc();
++        let cache = self.cert_cache.read();
++        cache.get(&hostname).is_some_and(|entry| now >= entry.not_before
++            && now <= entry.not_after && entry.leaf_der.as_slice() == leaf)
++    }
++
+     /// Generate a certificate for the given hostname
+-    fn generate_cert_config(&self, hostname: &str) -> Result<ServerConfig> {
++    fn generate_cert_config(&self, hostname: &str, now: time::OffsetDateTime) -> Result<CachedCertificate> {
+         // Create certificate parameters
+         let mut params = CertificateParams::default();
++        params.not_before = (now - time::Duration::minutes(5)).max(self.ca_validity.0);
++        params.not_after = (now + time::Duration::days(90)).min(self.ca_validity.1);
++        let validity = (params.not_before, params.not_after);
+ 
+         // Set distinguished name
+         let mut dn = DistinguishedName::new();
+@@ -146,7 +170,7 @@
+             .with_safe_default_protocol_versions()
+             .map_err(DohProxyError::Tls)?
+             .with_no_client_auth()
+-            .with_single_cert(vec![cert_der, self.ca_cert_der.clone()], key_der)
++            .with_single_cert(vec![cert_der.clone(), self.ca_cert_der.clone()], key_der)
+             .map_err(|e| DohProxyError::Certificate(format!("Failed to build config: {}", e)))?;
+ 
+         // ALPN：h2 MITM 开启时提供 h2，让 client 可协商 HTTP/2 多路复用；
+@@ -157,7 +181,8 @@
+             vec![b"http/1.1".to_vec()]
+         };
+ 
+-        Ok(config)
++        Ok(CachedCertificate { config: Arc::new(config), leaf_der: cert_der.to_vec(),
++            not_before: validity.0, not_after: validity.1 })
+     }
+ 
+     /// 从运行时 PEM 创建 CertManager（用于 per-device CA）
+@@ -167,9 +192,10 @@
+         let ca_key_pair = KeyPair::from_pem(key_pem)
+             .map_err(|e| DohProxyError::Certificate(format!("Failed to parse CA key: {}", e)))?;
+ 
+-        let ca_cert = CertificateParams::from_ca_cert_pem(cert_pem)
+-            .map_err(|e| DohProxyError::Certificate(format!("Failed to parse CA cert: {}", e)))?
+-            .self_signed(&ca_key_pair)
++        let ca_params = CertificateParams::from_ca_cert_pem(cert_pem)
++            .map_err(|e| DohProxyError::Certificate(format!("Failed to parse CA cert: {}", e)))?;
++        let ca_validity = (ca_params.not_before, ca_params.not_after);
++        let ca_cert = ca_params.self_signed(&ca_key_pair)
+             .map_err(|e| DohProxyError::Certificate(format!("Failed to load CA cert: {}", e)))?;
+ 
+         // 使用重建后的证书 DER，确保和 signed_by 使用的 issuer 一致
+@@ -189,6 +215,7 @@
+             ca_key_pair,
+             ca_cert,
+             ca_cert_der,
++            ca_validity,
+             leaf_key_pair,
+             leaf_key_der,
+             h2_mitm,
+@@ -242,3 +269,51 @@
+         CA_CERT_PEM
+     }
+ }
++
++#[cfg(test)]
++mod ohos_leaf_tests {
++    use super::*;
++    fn manager() -> CertManager {
++        let key = KeyPair::generate().unwrap();
++        let mut params = CertificateParams::default();
++        params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
++        let cert = params.self_signed(&key).unwrap();
++        CertManager::from_pem(&cert.pem(), &key.serialize_pem(), false).unwrap()
++    }
++    #[test]
++    fn ohos_leaf_matches_only_issued_current_host() {
++        let m = manager();
++        assert!(!m.matches_cached_leaf("example.com", &[1]));
++        assert!(m.cert_cache.read().is_empty());
++        m.get_server_config("EXAMPLE.com.").unwrap();
++        let leaf = m.cert_cache.read()["example.com"].leaf_der.clone();
++        assert!(m.matches_cached_leaf("example.com", &leaf));
++        assert!(m.matches_cached_leaf("EXAMPLE.COM.", &leaf));
++        assert!(!m.matches_cached_leaf("other.com", &leaf));
++        assert!(!m.matches_cached_leaf("example.com", m.ca_cert_der.as_ref()));
++        let mut corrupt = leaf.clone(); corrupt[0] ^= 1;
++        assert!(!m.matches_cached_leaf("example.com", &corrupt));
++        assert!(!manager().matches_cached_leaf("example.com", &leaf));
++        m.get_server_config("127.0.0.1").unwrap();
++        let ip_leaf = m.cert_cache.read()["127.0.0.1"].leaf_der.clone();
++        assert!(!m.matches_cached_leaf("127.0.0.1", &ip_leaf));
++    }
++    #[test]
++    fn ohos_leaf_rejects_expired_and_future_signed_leaves() {
++        let m = manager();
++        for offset in [-91, 1] {
++            let issued = time::OffsetDateTime::now_utc() + time::Duration::days(offset);
++            let entry = m.generate_cert_config("example.com", issued).unwrap();
++            let leaf = entry.leaf_der.clone();
++            m.cert_cache.write().insert("example.com".into(), entry);
++            assert!(!m.matches_cached_leaf("example.com", &leaf));
++        }
++    }
++    #[test]
++    fn ohos_leaf_dns_validation() {
++        for host in ["", ".", "example.com..", "-bad.com", "bad-.com", "a_b.com", "127.0.0.1", "::1", "é.com", "x/y", "a b", "a@b", "a:443"] {
++            assert!(canonical_dns_host(host).is_none(), "{host}");
++        }
++        assert!(canonical_dns_host(&"a".repeat(64)).is_none());
++    }
++}
+--- a/src/proxy.rs
++++ b/src/proxy.rs
+@@ -41,6 +41,10 @@
+ }
+ 
+ impl DohProxyServer {
++    pub fn matches_cached_leaf(&self, host: &str, leaf: &[u8]) -> bool {
++        self.cert_manager.as_ref().is_some_and(|manager| manager.matches_cached_leaf(host, leaf))
++    }
++
+     /// Create a new proxy server
+     pub async fn new(config: ProxyConfig) -> Result<Self> {
+         if config.gateway_mode && config.enable_doh {
+--- a/src/ffi.rs
++++ b/src/ffi.rs
+@@ -738,3 +738,35 @@
+             .try_init();
+     }
+ }
++
++/// Match only the active proxy's previously issued certificate; never generate here.
++#[no_mangle]
++pub extern "C" fn doh_proxy_matches_current_leaf(host: *const c_char, leaf: *const u8, len: usize) -> c_int {
++    if host.is_null() || leaf.is_null() || len == 0 || len > 16 * 1024 { return 0; }
++    let Ok(host) = (unsafe { CStr::from_ptr(host) }).to_str() else { return 0; };
++    let Some(host) = crate::cert::canonical_dns_host(host) else { return 0; };
++    let leaf = unsafe { std::slice::from_raw_parts(leaf, len) };
++    get_runtime().block_on(async {
++        let guard = get_server_holder().read().await;
++        if PORT.load(std::sync::atomic::Ordering::SeqCst) <= 0 { return 0; }
++        guard.as_ref().is_some_and(|server| server.port().is_some_and(|p| p > 0)
++            && server.matches_cached_leaf(&host, leaf)) as c_int
++    })
++}
++
++#[cfg(test)]
++mod ohos_ffi_tests {
++    use super::*;
++    #[test]
++    fn ohos_leaf_ffi_invalid_and_stopped() {
++        let host = std::ffi::CString::new("example.com").unwrap();
++        let invalid = std::ffi::CString::new("127.0.0.1").unwrap();
++        let leaf = [1u8];
++        assert_eq!(doh_proxy_matches_current_leaf(std::ptr::null(), leaf.as_ptr(), 1), 0);
++        assert_eq!(doh_proxy_matches_current_leaf(host.as_ptr(), std::ptr::null(), 1), 0);
++        assert_eq!(doh_proxy_matches_current_leaf(host.as_ptr(), leaf.as_ptr(), 16385), 0);
++        assert_eq!(doh_proxy_matches_current_leaf(invalid.as_ptr(), leaf.as_ptr(), 1), 0);
++        doh_proxy_stop();
++        assert_eq!(doh_proxy_matches_current_leaf(host.as_ptr(), leaf.as_ptr(), 1), 0);
++    }
++}

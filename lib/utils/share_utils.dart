@@ -17,7 +17,7 @@ import 'platform_utils.dart';
 ///
 /// [finalPath] 为用户最终保存位置；移动端通过系统分享面板时无法知道用户的
 /// 目的地，[finalPath] 为 null 但 [shared] 为 true。用户取消时 [shared]
-/// 为 false 且 [finalPath] 为 null。
+/// 为 false 且 [finalPath] 为 null。OHOS 只能确认分享面板已显示，不能确认发送或取消。
 ///
 /// Android 落公共目录（MediaStore / SAF 另存为）时 [finalPath] 是 content
 /// uri 而非文件路径，见 [isContentUri]：这类引用不能用 `File()` 打开，

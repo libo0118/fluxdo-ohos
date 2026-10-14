@@ -21,17 +21,24 @@ abstract final class ClipboardUtils {
   static Future<OhosClipboardContent> readOhos() async {
     final value = await PublicFileChannel.readClipboard();
     final mime = value?['mimeType'] as String?;
+    var image = value?['bytes'] as Uint8List?;
+    var extension = switch (mime) {
+      'image/png' => 'png',
+      'image/jpeg' => 'jpg',
+      'image/gif' => 'gif',
+      'image/webp' => 'webp',
+      _ => null,
+    };
+    if (image != null && (mime == 'image/avif' || mime == 'image/svg+xml')) {
+      final converted = await prepareSystemImage(image, expectedMimeType: mime);
+      image = converted.$1;
+      extension = converted.$2;
+    }
     return OhosClipboardContent(
       html: value?['html'] as String?,
       text: value?['text'] as String?,
-      image: value?['bytes'] as Uint8List?,
-      extension: switch (mime) {
-        'image/png' => 'png',
-        'image/jpeg' => 'jpg',
-        'image/gif' => 'gif',
-        'image/webp' => 'webp',
-        _ => null,
-      },
+      image: image,
+      extension: extension,
     );
   }
 

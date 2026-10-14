@@ -7,9 +7,13 @@ import '../services/avif_image_provider.dart';
 import 'svg_utils.dart';
 
 /// 系统剪贴板/图库可直接接收的格式保留原字节，其余位图只导出当前首帧。
-Future<(Uint8List, String)> prepareSystemImage(Uint8List bytes) async {
+Future<(Uint8List, String)> prepareSystemImage(Uint8List bytes, {String? expectedMimeType}) async {
   if (bytes.isEmpty || bytes.length > 32 * 1024 * 1024) {
     throw const FormatException('Image data is empty or too large');
+  }
+  if ((expectedMimeType == 'image/avif' && !_isAvif(bytes)) ||
+      (expectedMimeType == 'image/svg+xml' && !SvgUtils.isSvgBytes(bytes))) {
+    throw const FormatException('Clipboard image does not match its declared format');
   }
   if (bytes.length >= 8 && bytes[0] == 0x89 &&
       String.fromCharCodes(bytes.sublist(1, 4)) == 'PNG') return (bytes, 'png');

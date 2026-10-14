@@ -118,6 +118,7 @@ jobs:
       - name: Create HarmonyOS target and resolve packages
         run: |
           set -euo pipefail
+          exec > >(tee -a setup-ohos.log) 2>&1
           flutter --version
           flutter create --platforms=ohos --org=com.github.libo0118 --project-name=fluxdo --no-pub .
           flutter pub get 2>&1 | tee pub-get-ohos.log
@@ -144,6 +145,13 @@ jobs:
         if: always()
         run: |
           mkdir -p diagnostics
+          for log in setup-ohos.log pub-get-ohos.log build-ohos.log; do
+            if [ -f "$log" ]; then
+              printf '\n### %s\n\n```text\n' "$log" >> "$GITHUB_STEP_SUMMARY"
+              tail -n 100 "$log" >> "$GITHUB_STEP_SUMMARY"
+              printf '\n```\n' >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
           git diff --binary > diagnostics/generated-source.patch
           cp pubspec_overrides.yaml diagnostics/ 2>/dev/null || true
           cp pubspec.lock diagnostics/ 2>/dev/null || true

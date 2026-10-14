@@ -85,7 +85,7 @@ export class AssetProtectedStore {
     try {
       found = await this.queryKey();
     } catch (error) {
-      if ((error as BusinessError).code !== 24000002) throw error;
+      if ((error as BusinessError).code !== 24000002) throw error as Error;
       if (Object.keys(this.all()).some((name: string) => name.startsWith(RECORD_PREFIX))) {
         // 密钥丢失时拒绝生成替代密钥，避免把旧密文永久覆盖。
         throw new Error('系统安全存储密钥丢失');
@@ -101,7 +101,7 @@ export class AssetProtectedStore {
         await asset.add(attributes);
       } catch (addError) {
         // 跨引擎首次写入竞争时复用胜出的系统密钥，绝不覆盖。
-        if ((addError as BusinessError).code !== 24000003) throw addError;
+        if ((addError as BusinessError).code !== 24000003) throw addError as Error;
       } finally {
         bytes.fill(0);
       }
@@ -204,7 +204,7 @@ export class AssetProtectedStore {
       }
       // 恢复内存和持久索引；恢复也失败时仍向调用方报错。
       await this.source.flush();
-      throw error;
+      throw error as Error;
     }
     if (previous !== null) {
       for (let index = 0; index < previous.chunks; index++) {
@@ -226,7 +226,7 @@ export class AssetProtectedStore {
     } catch (error) {
       this.source.putSync(name, previousRaw);
       await this.source.flush();
-      throw error;
+      throw error as Error;
     }
     for (let index = 0; index < previous.chunks; index++) {
       this.source.deleteSync(this.chunkKey(previous.id, index));
@@ -243,7 +243,7 @@ export class AssetProtectedStore {
     } catch (error) {
       for (const name of Object.keys(previous)) this.source.putSync(name, previous[name]);
       await this.source.flush();
-      throw error;
+      throw error as Error;
     }
   }
 

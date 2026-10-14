@@ -673,7 +673,7 @@ extension _UserActions on _TopicDetailPageState {
       username: username,
       anonymousShare: prefs.anonymousShare,
     );
-    SharePlus.instance.share(ShareParams(text: url));
+    ShareUtils.shareText(url);
   }
 
   Future<void> _openInBrowser() async {
@@ -938,7 +938,7 @@ extension _UserActions on _TopicDetailPageState {
       username: username,
       anonymousShare: prefs.anonymousShare,
     );
-    SharePlus.instance.share(ShareParams(text: url));
+    ShareUtils.shareText(url);
   }
 
   void _showFlagPostSheet(Post post) {

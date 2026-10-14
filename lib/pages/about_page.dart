@@ -144,7 +144,9 @@ class _AboutPageState extends State<AboutPage> {
       // 否则 pop 掉的是页面本身，loading 弹框永远卡住。
       Navigator.of(context, rootNavigator: true).pop(); // 关闭加载对话框
 
-      if (updateInfo.hasUpdate) {
+      if (updateInfo == null) {
+        _showHarmonyActionsDialog();
+      } else if (updateInfo.hasUpdate) {
         showAppDialog(
           context: context,
           builder: (context) => UpdateDialog(
@@ -168,6 +170,27 @@ class _AboutPageState extends State<AboutPage> {
       Navigator.of(context, rootNavigator: true).pop(); // 关闭加载对话框
       _showErrorDialog(e.toString());
     }
+  }
+
+  /// 在浏览器中打开
+  void _showHarmonyActionsDialog() {
+    showAppDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(context.l10n.about_harmonyNoRelease),
+        content: Text(context.l10n.about_harmonyActionsContent),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(), child: Text(context.l10n.common_ok)),
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              _openInBrowser(UpdateService.harmonyActionsUrl);
+            },
+            child: Text(context.l10n.about_openHarmonyBuilds),
+          ),
+        ],
+      ),
+    );
   }
 
   /// 在浏览器中打开
@@ -324,7 +347,7 @@ class _AboutPageState extends State<AboutPage> {
                   title: context.l10n.about_sourceCode,
                   subtitle: 'GitHub',
                   onTap: () => launchUrl(
-                    Uri.parse('https://github.com/1molchuan/fluxdo'),
+                    Uri.parse(_updateService.repositoryUrl),
                     mode: LaunchMode.externalApplication,
                   ),
                 ),
@@ -354,7 +377,7 @@ class _AboutPageState extends State<AboutPage> {
                   icon: Symbols.bug_report_rounded,
                   title: context.l10n.about_feedback,
                   onTap: () => launchUrl(
-                    Uri.parse('https://github.com/1molchuan/fluxdo/issues'),
+                    Uri.parse('${_updateService.repositoryUrl}/issues'),
                     mode: LaunchMode.externalApplication,
                   ),
                 ),

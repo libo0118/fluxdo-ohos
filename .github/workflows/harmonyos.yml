@@ -132,7 +132,10 @@ jobs:
           python3 tool/prepare_ohos_storage.py
           python3 tool/prepare_ohos_media.py after-pub-get
           python3 tool/prepare_ohos_images.py --stage after-pub-get
-      - name: Validate protected credential storage
+          python3 tool/prepare_ohos_transcode.py
+          python3 tool/prepare_ohos_files.py
+          python3 tool/prepare_ohos_notifications.py
+      - name: Validate protected storage and system capability contracts
         run: |
           set -euo pipefail
           npm install --prefix "$RUNNER_TEMP/ohos-tests" --no-save --ignore-scripts typescript@6.0.3
@@ -140,7 +143,13 @@ jobs:
           python3 tool/prepare_ohos_storage.py --self-test
           python3 tool/prepare_ohos_media.py --self-test
           python3 tool/prepare_ohos_images.py --self-test
+          python3 tool/prepare_ohos_transcode.py --self-test
+          python3 tool/prepare_ohos_files.py --self-test
+          python3 tool/prepare_ohos_notifications.py --self-test
           node tool/test_ohos_secure_storage.mjs "$RUNNER_TEMP/ohos-tests/node_modules/typescript" "$GITHUB_WORKSPACE" 2>&1 | tee storage-ohos.log
+          node tool/test_ohos_transcode.mjs "$RUNNER_TEMP/ohos-tests/node_modules/typescript" "$GITHUB_WORKSPACE" 2>&1 | tee transcode-ohos.log
+          node tool/test_ohos_files.mjs "$RUNNER_TEMP/ohos-tests/node_modules/typescript" "$GITHUB_WORKSPACE" 2>&1 | tee files-ohos.log
+          node tool/test_ohos_notifications.mjs "$RUNNER_TEMP/ohos-tests/node_modules/typescript" "$GITHUB_WORKSPACE" 2>&1 | tee notifications-ohos.log
       - name: Compile the actual OHOS network libraries
         run: |
           set -euo pipefail
@@ -159,7 +168,7 @@ jobs:
           python3 tool/prepare_ohos_app.py
           python3 tool/prepare_ohos_enums.py --self-test
           python3 tool/prepare_ohos_enums.py
-          flutter test --no-pub test/services/system_proxy_detector_test.dart test/services/network/cookie/raw_cookie_writer_fallback_test.dart 2>&1 | tee tests-ohos.log
+          flutter test --no-pub test/services/system_proxy_detector_test.dart test/services/network/cookie/raw_cookie_writer_fallback_test.dart test/image_transfer_utils_test.dart test/services/notification_tap_queue_test.dart test/services/message_bus_ohos_background_test.dart 2>&1 | tee tests-ohos.log
       - name: Compile the original Flutter application to HAP
         run: |
           set -euo pipefail
@@ -182,7 +191,7 @@ jobs:
         if: always()
         run: |
           mkdir -p diagnostics
-          for log in setup-ohos.log pub-get-ohos.log storage-ohos.log network-ohos.log image-ohos.log tests-ohos.log build-ohos.log; do
+          for log in setup-ohos.log pub-get-ohos.log storage-ohos.log transcode-ohos.log files-ohos.log notifications-ohos.log network-ohos.log image-ohos.log tests-ohos.log build-ohos.log; do
             if [ -f "$log" ]; then
               printf '\n### %s\n\n```text\n' "$log" >> "$GITHUB_STEP_SUMMARY"
               tail -n 100 "$log" >> "$GITHUB_STEP_SUMMARY"

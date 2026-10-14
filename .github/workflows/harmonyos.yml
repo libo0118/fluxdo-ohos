@@ -3,8 +3,7 @@ name: HarmonyOS HAP (experimental)
 on:
   workflow_dispatch:
   push:
-    paths:
-      - '.github/workflows/harmonyos.yml'
+    branches: [main]
 
 permissions:
   contents: read
@@ -96,6 +95,11 @@ jobs:
               git:
                 url: https://github.com/tljk/flutter_js.git
                 ref: master
+            file_picker:
+              git:
+                url: https://github.com/tljk/flutter_file_picker.git
+                ref: v12.0.0-beta.7-fix-ohos
+            share_plus: 13.3.1
             dynamic_color:
               git:
                 url: https://gitcode.com/CPF-Flutter/fluttertpc_dynamic_color.git
@@ -110,19 +114,6 @@ jobs:
             win32_registry: 3.0.3
             flutter_rust_bridge: 2.12.0
           YAML
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('pubspec.yaml')
-          source = p.read_text()
-          marker = '\ndependencies:\n'
-          assert source.count(marker) == 1
-          source = source.replace(marker, marker + '''  flutter_secure_storage_ohos:
-              git:
-                url: https://github.com/ClosedHarmony/flutter_secure_storage_ohos.git
-                ref: 545fb022eed8ce7891028d4851a617b9a8328177
-          ''', 1)
-          p.write_text(source)
-          PY
       - name: Create HarmonyOS target and resolve packages
         run: |
           set -euo pipefail
@@ -131,6 +122,13 @@ jobs:
           flutter create --platforms=ohos --org=com.github.libo0118 --project-name=fluxdo --no-pub .
           flutter pub get 2>&1 | tee pub-get-ohos.log
           dart tool/project_prep.dart test
+      - name: Apply scoped OHOS compatibility patches and test
+        run: |
+          set -euo pipefail
+          python3 tool/prepare_ohos_app.py
+          python3 tool/prepare_ohos_enums.py --self-test
+          python3 tool/prepare_ohos_enums.py
+          flutter test test/services/system_proxy_detector_test.dart test/services/network/cookie/raw_cookie_writer_fallback_test.dart 2>&1 | tee tests-ohos.log
       - name: Compile the original Flutter application to HAP
         run: |
           set -euo pipefail
@@ -153,7 +151,7 @@ jobs:
         if: always()
         run: |
           mkdir -p diagnostics
-          for log in setup-ohos.log pub-get-ohos.log build-ohos.log; do
+          for log in setup-ohos.log pub-get-ohos.log tests-ohos.log build-ohos.log; do
             if [ -f "$log" ]; then
               printf '\n### %s\n\n```text\n' "$log" >> "$GITHUB_STEP_SUMMARY"
               tail -n 100 "$log" >> "$GITHUB_STEP_SUMMARY"

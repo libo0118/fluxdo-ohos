@@ -124,11 +124,14 @@ jobs:
           mkdir -p assets/certs
           python3 tool/prepare_ohos_network.py --stage before-pub-get
           python3 tool/prepare_ohos_media.py before-pub-get
-          flutter pub get 2>&1 | tee pub-get-ohos.log
+          python3 tool/prepare_ohos_images.py --stage before-pub-get
+          # The pinned video plugin has LFS example movies; they are not application assets.
+          GIT_LFS_SKIP_SMUDGE=1 flutter pub get 2>&1 | tee pub-get-ohos.log
           dart tool/project_prep.dart test
           python3 tool/prepare_ohos_network.py --stage after-pub-get
           python3 tool/prepare_ohos_storage.py
           python3 tool/prepare_ohos_media.py after-pub-get
+          python3 tool/prepare_ohos_images.py --stage after-pub-get
       - name: Validate protected credential storage
         run: |
           set -euo pipefail
@@ -136,14 +139,20 @@ jobs:
           python3 tool/prepare_ohos_network.py --self-test
           python3 tool/prepare_ohos_storage.py --self-test
           python3 tool/prepare_ohos_media.py --self-test
+          python3 tool/prepare_ohos_images.py --self-test
           node tool/test_ohos_secure_storage.mjs "$RUNNER_TEMP/ohos-tests/node_modules/typescript" "$GITHUB_WORKSPACE" 2>&1 | tee storage-ohos.log
       - name: Compile the actual OHOS network libraries
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -qy cmake make perl pkg-config clang llvm libclang-dev
+          sudo apt-get install -qy cmake make perl pkg-config clang llvm libclang-dev meson ninja-build nasm
           bash -n tool/ohos_native_env.sh tool/build_ohos_network.sh
           bash tool/build_ohos_network.sh 2>&1 | tee network-ohos.log
+      - name: Compile and test the actual OHOS image libraries
+        run: |
+          set -euo pipefail
+          bash -n tool/build_ohos_images.sh
+          bash tool/build_ohos_images.sh 2>&1 | tee image-ohos.log
       - name: Apply scoped OHOS compatibility patches and test
         run: |
           set -euo pipefail
@@ -173,7 +182,7 @@ jobs:
         if: always()
         run: |
           mkdir -p diagnostics
-          for log in setup-ohos.log pub-get-ohos.log storage-ohos.log network-ohos.log tests-ohos.log build-ohos.log; do
+          for log in setup-ohos.log pub-get-ohos.log storage-ohos.log network-ohos.log image-ohos.log tests-ohos.log build-ohos.log; do
             if [ -f "$log" ]; then
               printf '\n### %s\n\n```text\n' "$log" >> "$GITHUB_STEP_SUMMARY"
               tail -n 100 "$log" >> "$GITHUB_STEP_SUMMARY"
@@ -187,6 +196,10 @@ jobs:
           if [ -d work/network-port ]; then
             mkdir -p diagnostics/network
             cp work/network-port/*.readelf.txt work/network-port/*.symbols.txt work/network-port/BUILD-INFO.txt diagnostics/network/ 2>/dev/null || true
+          fi
+          if [ -d work/image-port ]; then
+            mkdir -p diagnostics/images
+            cp work/image-port/*.readelf.txt work/image-port/*.symbols.txt work/image-port/BUILD-INFO.txt diagnostics/images/ 2>/dev/null || true
           fi
           if [ -d ohos ]; then tar --exclude='node_modules' --exclude='oh_modules' --exclude='build' -czf diagnostics/ohos-project.tar.gz ohos; fi
       - uses: actions/upload-artifact@v4

@@ -31,6 +31,7 @@ class _DiscourseAudioPlayerState extends State<DiscourseAudioPlayer> {
   final AudioPlayer _player = AudioPlayer();
   bool _ready = false;
   Object? _error;
+  StreamSubscription<PlayerException>? _errorSubscription;
 
   /// 当前倍速(just_audio 三后端 —— 官方/media_kit/JustAudioGst 均实现
   /// setSpeed)。换 url 重载后 just_audio 保持 speed,不需要重设。
@@ -39,6 +40,9 @@ class _DiscourseAudioPlayerState extends State<DiscourseAudioPlayer> {
   @override
   void initState() {
     super.initState();
+    _errorSubscription = _player.errorStream.listen((error) {
+      if (mounted) setState(() => _error = error);
+    });
     unawaited(_init());
   }
 
@@ -47,9 +51,8 @@ class _DiscourseAudioPlayerState extends State<DiscourseAudioPlayer> {
       await _player.setUrl(widget.url);
       if (mounted) setState(() => _ready = true);
     } catch (e) {
-      // 平台差异排查的关键线索:AVFoundation 对容器/扩展名远比
-      // ExoPlayer 挑剔,失败原因只在这里可见(对齐 DiscourseVideoPlayer)
-      debugPrint('[Audio] 加载失败 url=${widget.url} error=$e');
+      // 媒体 URL 可能含鉴权参数，日志只记录操作结果。
+      debugPrint('[Audio] 加载失败');
       if (mounted) setState(() => _error = e);
     }
   }
@@ -66,6 +69,7 @@ class _DiscourseAudioPlayerState extends State<DiscourseAudioPlayer> {
 
   @override
   void dispose() {
+    unawaited(_errorSubscription?.cancel());
     _player.dispose();
     super.dispose();
   }

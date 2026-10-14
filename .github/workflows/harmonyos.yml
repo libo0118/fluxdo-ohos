@@ -119,22 +119,39 @@ jobs:
           set -euo pipefail
           exec > >(tee -a setup-ohos.log) 2>&1
           flutter --version
-          flutter create --platforms=ohos --org=com.github.libo0118 --project-name=fluxdo --no-pub .
-          # shortcut: OHOS DoH 库尚未接入；保留声明的资源目录，移植代理时恢复证书生成。
+          flutter create --platforms=ohos --org=com.github.molchuan --project-name=fluxdo --no-pub .
+          python3 tool/prepare_ohos_identity.py
           mkdir -p assets/certs
+          python3 tool/prepare_ohos_network.py --stage before-pub-get
           flutter pub get 2>&1 | tee pub-get-ohos.log
           dart tool/project_prep.dart test
+          python3 tool/prepare_ohos_network.py --stage after-pub-get
+          python3 tool/prepare_ohos_storage.py
+      - name: Validate protected credential storage
+        run: |
+          set -euo pipefail
+          npm install --prefix "$RUNNER_TEMP/ohos-tests" --no-save --ignore-scripts typescript@6.0.3
+          python3 tool/prepare_ohos_network.py --self-test
+          python3 tool/prepare_ohos_storage.py --self-test
+          node tool/test_ohos_secure_storage.mjs "$RUNNER_TEMP/ohos-tests/node_modules/typescript" "$GITHUB_WORKSPACE" 2>&1 | tee storage-ohos.log
+      - name: Compile the actual OHOS network libraries
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -qy cmake make perl pkg-config clang llvm libclang-dev
+          bash -n tool/ohos_native_env.sh tool/build_ohos_network.sh
+          bash tool/build_ohos_network.sh 2>&1 | tee network-ohos.log
       - name: Apply scoped OHOS compatibility patches and test
         run: |
           set -euo pipefail
           python3 tool/prepare_ohos_app.py
           python3 tool/prepare_ohos_enums.py --self-test
           python3 tool/prepare_ohos_enums.py
-          flutter test test/services/system_proxy_detector_test.dart test/services/network/cookie/raw_cookie_writer_fallback_test.dart 2>&1 | tee tests-ohos.log
+          flutter test --no-pub test/services/system_proxy_detector_test.dart test/services/network/cookie/raw_cookie_writer_fallback_test.dart 2>&1 | tee tests-ohos.log
       - name: Compile the original Flutter application to HAP
         run: |
           set -euo pipefail
-          flutter build hap --release --no-codesign 2>&1 | tee build-ohos.log
+          flutter build hap --release --no-codesign --no-pub 2>&1 | tee build-ohos.log
           mkdir -p dist
           find ohos/entry/build -type f -name '*.hap' -exec cp '{}' dist/ \;
           test -n "$(find dist -maxdepth 1 -name '*.hap' -print -quit)"
@@ -153,7 +170,7 @@ jobs:
         if: always()
         run: |
           mkdir -p diagnostics
-          for log in setup-ohos.log pub-get-ohos.log tests-ohos.log build-ohos.log; do
+          for log in setup-ohos.log pub-get-ohos.log storage-ohos.log network-ohos.log tests-ohos.log build-ohos.log; do
             if [ -f "$log" ]; then
               printf '\n### %s\n\n```text\n' "$log" >> "$GITHUB_STEP_SUMMARY"
               tail -n 100 "$log" >> "$GITHUB_STEP_SUMMARY"
@@ -164,6 +181,10 @@ jobs:
           cp pubspec_overrides.yaml diagnostics/ 2>/dev/null || true
           cp pubspec.lock diagnostics/ 2>/dev/null || true
           cp *-ohos.log diagnostics/ 2>/dev/null || true
+          if [ -d work/network-port ]; then
+            mkdir -p diagnostics/network
+            cp work/network-port/*.readelf.txt work/network-port/*.symbols.txt work/network-port/BUILD-INFO.txt diagnostics/network/ 2>/dev/null || true
+          fi
           if [ -d ohos ]; then tar --exclude='node_modules' --exclude='oh_modules' --exclude='build' -czf diagnostics/ohos-project.tar.gz ohos; fi
       - uses: actions/upload-artifact@v4
         if: always()

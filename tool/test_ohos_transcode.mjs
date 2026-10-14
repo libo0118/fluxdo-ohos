@@ -127,9 +127,9 @@ function environment(options = {}) {
   function invoke(method, args = null) {
     return new Promise(resolve => {
       let replies = 0;
-      plugin.onMethodCall({ method, arguments: args, argument: key => args?.[key] ?? null }, {
+      plugin.onMethodCall({ method, args, argument: key => args?.[key] ?? null }, {
         success(value) { assert.equal(++replies, 1, '通道只能回包一次'); resolve({ value }); },
-        error(code, message) { assert.equal(++replies, 1); resolve({ error: code, message }); },
+        error(code, message, details) { assert.equal(++replies, 1); resolve({ error: code, message, details }); },
         notImplemented() { assert.fail('未知通道'); },
       });
     });
@@ -216,7 +216,11 @@ await test('native error/start/create/release 失败均清理句柄和临时文�
       if (options.failRelease) e.state.transcoders[0].complete();
       else e.state.transcoders[0].emit('error', { code: 5400106, message: 'unsupported' });
     }
-    assert.equal((await result).error, 'TRANSCODE'); assert.equal(e.handles.size, 0); assert.equal(e.files.size, 1);
+    const failure = await result;
+    assert.equal(failure.error, 'TRANSCODE'); assert.equal(e.handles.size, 0); assert.equal(e.files.size, 1);
+    if (Object.keys(options).length === 0) {
+      assert.equal(failure.message, 'unsupported'); assert.equal(failure.details, 5400106);
+    }
   }
 });
 await test('同 inode 别名和输出为空不能假成功', async () => {

@@ -164,6 +164,7 @@ def patch_wakelock(source):
 def patch_audio(source):
     source = source.replace("\r\n", "\n")
     if NATIVE_MARKER in source:
+        source = replace_once(source, "REASON_OLD_DEVICE_UNAVALIABLE", "REASON_OLD_DEVICE_UNAVAILABLE")
         for required in ["createMediaSourceWithUrl(uri, headers)", "player.on('audioInterrupt'", "this.eventSink?.error", "setPlaybackRate(this.speed)"]:
             if required not in source:
                 raise AssertionError("已有音频补丁不完整")
@@ -213,7 +214,7 @@ def patch_audio(source):
         "      } else if (event.hintType === audio.InterruptHint.INTERRUPT_HINT_UNDUCK) {\n"
         "        player.setVolume(this.volume);\n      }\n    });\n"
         "    player.on('audioOutputDeviceChangeWithInfo', (event: audio.AudioStreamDeviceChangeInfo): void => {\n"
-        "      if (player === this.avPlayer && event.changeReason === audio.AudioStreamDeviceChangeReason.REASON_OLD_DEVICE_UNAVALIABLE) {\n"
+        "      if (player === this.avPlayer && event.changeReason === audio.AudioStreamDeviceChangeReason.REASON_OLD_DEVICE_UNAVAILABLE) {\n"
         "        this.handlePause().catch((): void => this.reportError(5400107));\n      }\n    });\n"
         "    player.on('bufferingUpdate', (kind: media.BufferingInfoType, value: number): void => {\n"
         "      if (player !== this.avPlayer) return;\n"
@@ -428,6 +429,9 @@ def patch_record(source):
 def patch_video(source):
     source = source.replace("\r\n", "\n")
     if NATIVE_MARKER in source:
+        source = replace_once(source,
+            "this.eventSink?.error('VideoError', '原生视频播放失败。', null);",
+            "this.eventSink?.error('VideoError', '原生视频播放失败。', {});")
         if "setPlaybackRate(rate)" not in source:
             raise AssertionError("已有视频补丁不完整")
         return source
@@ -451,7 +455,7 @@ def patch_video(source):
     source = replace_once(source, "  setSpeed(playSpeed: number) {", "  setPlaybackRate(rate: number): void {\n"
         "    if (!Number.isFinite(rate) || rate < 0.125 || rate > 4) throw new Error('倍速无效');\n"
         "    this.avPlayer?.setPlaybackRate(rate);\n  }\n\n  setSpeed(playSpeed: number) {")
-    source = replace_region(source, "  sendError(error: Object): void {", "  getIUri(): string {", "  sendError(error: Object): void {\n    this.eventSink?.error('VideoError', '原生视频播放失败。', null);\n  }\n\n")
+    source = replace_region(source, "  sendError(error: Object): void {", "  getIUri(): string {", "  sendError(error: Object): void {\n    this.eventSink?.error('VideoError', '原生视频播放失败。', {});\n  }\n\n")
     # 单个 Flutter 视频结束时无需访问示例应用的全局播放列表。
     source = replace_region(source, "          if (!this.loop) {", "          break;\n        case AvplayerStatus.RELEASED:", "          if (!this.loop) this.pendingPlay = false;\n")
     return source
@@ -573,6 +577,12 @@ def self_test(source_root=None):
                 assert "createMediaSourceWithUrl(uri, headers)" in patched
                 assert "this.eventSink?.error" in patched and "this.prepareTimer = setTimeout" in patched
                 assert "player.seek(Math.floor(position / 1000), media.SeekMode.SEEK_CLOSEST)" in patched
+                assert "REASON_OLD_DEVICE_UNAVAILABLE" in patched
+                assert patch_audio(patched.replace("REASON_OLD_DEVICE_UNAVAILABLE", "REASON_OLD_DEVICE_UNAVALIABLE")) == patched
+            if patch is patch_video:
+                report = "this.eventSink?.error('VideoError', '原生视频播放失败。', {});"
+                assert report in patched
+                assert patch_video(patched.replace(report, report.replace("{}", "null"))) == patched
             if patch is patch_record:
                 assert "getMaxAmplitudeForInputDevice" not in patched
                 assert "getAudioCapturerMaxAmplitude()" in patched

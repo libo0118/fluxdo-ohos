@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import shutil
+import tempfile
 from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
 
@@ -45,8 +47,19 @@ def verify_doh(repo):
         raise AssertionError(f"DoH 提交不匹配：{revision}，应为 {DOH_REV}")
 
 
+def patch_doh(repo):
+    source = repo / "core/doh_proxy"
+    patch = repo / "ohos_support/webview/doh-current-leaf.patch"
+    command = ["git", "-C", str(source), "apply", "--check"]
+    if subprocess.run(command + ["--reverse", str(patch.resolve())], capture_output=True).returncode == 0:
+        return
+    subprocess.run(command + [str(patch.resolve())], check=True)
+    subprocess.run(["git", "-C", str(source), "apply", str(patch.resolve())], check=True)
+
+
 def prepare_before_pub_get(repo):
     verify_doh(repo)
+    patch_doh(repo)
     path = repo / "pubspec.yaml"
     content = path.read_text(encoding="utf-8")
     pinned = RHTTP_DEPENDENCY + f"      ref: {RHTTP_REV}\n"
@@ -86,6 +99,7 @@ def verify_rhttp(repo, package):
 
 def prepare_after_pub_get(repo):
     verify_doh(repo)
+    patch_doh(repo)
     package = rhttp_package(repo)
     verify_rhttp(repo, package)
     path = package / "lib/src/rhttp.dart"
@@ -101,7 +115,7 @@ def prepare_after_pub_get(repo):
     print(f"已配置 OHOS rhttp 加载入口：{package}")
 
 
-def self_test():
+def self_test(doh_source=None):
     original = "import 'dart:async';\n    await RustLib.init(\n      forceSameCodegenVersion: false,\n    );\n"
     patched = replace_once(original, "import 'dart:async';", RHTTP_IMPORTS, "测试 import")
     patched = replace_once(patched, "    await RustLib.init(", RHTTP_INIT, "测试 init")
@@ -118,6 +132,32 @@ def self_test():
     else:
         raise AssertionError("漂移源码未被拒绝")
     assert r"libdoh_proxy.so" in (Path(__file__).resolve().parent.parent / "lib/services/network/doh_proxy/doh_proxy_ffi.dart").read_text(encoding="utf-8")
+    if doh_source is not None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            source = repo / 'core/doh_proxy'
+            source.mkdir(parents=True)
+            for name in ['cert.rs', 'proxy.rs', 'ffi.rs']:
+                (source / 'src').mkdir(exist_ok=True)
+                shutil.copyfile(doh_source / 'src' / name, source / 'src' / name)
+            patch = repo / 'ohos_support/webview/doh-current-leaf.patch'
+            patch.parent.mkdir(parents=True)
+            shutil.copyfile(Path(__file__).resolve().parent.parent / 'ohos_support/webview/doh-current-leaf.patch', patch)
+            patch_doh(repo)
+            first = {name: (source / 'src' / name).read_bytes() for name in ['cert.rs', 'proxy.rs', 'ffi.rs']}
+            patch_doh(repo)
+            assert first == {name: (source / 'src' / name).read_bytes() for name in first}
+            path = source / 'src/cert.rs'
+            path.write_text(path.read_text(encoding='utf-8').replace('matches_cached_leaf', 'drift'), encoding='utf-8')
+            before = {name: (source / 'src' / name).read_bytes() for name in first}
+            try:
+                patch_doh(repo)
+            except subprocess.CalledProcessError:
+                pass
+            else:
+                raise AssertionError('Rust patch source drift accepted')
+            assert before == {name: (source / 'src' / name).read_bytes() for name in first}
+        print('Rust actual-source patch: repeat and atomic drift rejection passed')
     print("网络准备脚本自检通过")
 
 
@@ -126,9 +166,10 @@ if __name__ == "__main__":
     parser.add_argument("--stage", choices=("before-pub-get", "after-pub-get", "rhttp-path"))
     parser.add_argument("--repo", type=Path, default=Path.cwd())
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--doh-source", type=Path)
     args = parser.parse_args()
     if args.self_test:
-        self_test()
+        self_test(args.doh_source)
     elif args.stage == "before-pub-get":
         prepare_before_pub_get(args.repo.resolve())
     elif args.stage == "after-pub-get":

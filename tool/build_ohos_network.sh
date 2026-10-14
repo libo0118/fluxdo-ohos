@@ -22,6 +22,7 @@ host="$(rustc "+$rust_version" -vV | sed -n 's/^host: //p')"
 # gen_ca 在 host 上运行；之后两种网络引擎都使用同一份证书资源。
 (
   cd "$repo/core/doh_proxy"
+  CARGO_TARGET_DIR="$work/host" cargo "+$rust_version" test --locked --lib --target "$host" ohos_leaf
   CARGO_TARGET_DIR="$work/host" cargo "+$rust_version" run --locked --release --target "$host" --bin gen_ca
 )
 install -m 644 "$repo/core/doh_proxy/certs/ca.crt" "$repo/assets/certs/proxy_ca.pem"
@@ -58,7 +59,7 @@ verify_elf() {
 verify_elf "$out/libdoh_proxy.so"
 verify_elf "$out/librhttp.so"
 for symbol in doh_proxy_start_with_config_json doh_proxy_stop doh_proxy_is_running \
-    doh_proxy_get_port doh_proxy_init_logging doh_proxy_lookup_ech_config \
+    doh_proxy_get_port doh_proxy_matches_current_leaf doh_proxy_init_logging doh_proxy_lookup_ech_config \
     doh_proxy_lookup_ip doh_proxy_lookup_host doh_proxy_clear_dns_cache \
     doh_proxy_record_host_success doh_proxy_clear_preferred_host_ip \
     doh_proxy_dns_cache_stats doh_proxy_dns_cache_records doh_proxy_generate_ca \

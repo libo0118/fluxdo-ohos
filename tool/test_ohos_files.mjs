@@ -88,6 +88,7 @@ function environment(options = {}) {
       createData(mime, buffer) { return { records: [{ mime, value: buffer }], addRecord(mime, value) { this.records.push({ mime, value }); } }; },
     },
     image: imageApi,
+    util: { TextEncoder: class { encodeInto(value) { return new TextEncoder().encode(value); } } },
   };
   vm.runInNewContext(transpiled.outputText, sandbox);
   const Plugin = sandbox.exports.default;
@@ -126,6 +127,12 @@ test('持久授权拒绝后保留独立副本而非取消', async () => {
   const result = await invoke('saveAs', { sourcePath: '/input', fileName: 'test.txt' });
   assert.match(result.value.get('uri'), /^\/files\/export_history\//);
   assert.equal(state.files.get(result.value.get('uri')), 'source bytes'); assert.equal(state.handles.size, 0);
+  const path = result.value.get('uri');
+  assert.equal((await invoke('openUri', { uri: path, mimeType: 'text/plain' })).value, true);
+  assert.equal(state.wants.at(-1).uri, 'file://app' + path);
+  assert.equal((await invoke('shareUri', { uri: path, mimeType: 'text/plain' })).value, true);
+  assert.equal(state.shares.at(-1).data.record.uri, 'file://app' + path);
+  assert.equal(state.activated.length, 0);
 });
 test('复制失败仍关闭两个 fd', async () => {
   const { state, invoke } = environment({ copyFailure: true });
@@ -204,6 +211,28 @@ test('只有 PixelMap 的系统剪贴板转 PNG 并释放资源', async () => {
   } })] });
   const value = (await invoke('readClipboard')).value;
   assert.equal(value.get('mimeType'), 'image/png'); assert.equal(released, 1); assert.equal(state.released, 1);
+});
+test('仅有 AVIF/SVG MIME 的剪贴板保留原始字节供 Dart 转换', async () => {
+  for (const mime of ['image/avif', 'image/svg+xml']) {
+    const bytes = Uint8Array.from([11, 22, 33]);
+    const { invoke } = environment({ records: [record({ [mime]: bytes.buffer })] });
+    const value = (await invoke('readClipboard')).value;
+    assert.equal(value.get('mimeType'), mime);
+    assert.deepEqual(value.get('bytes'), bytes);
+    assert.equal(value.has('html'), false);
+  }
+  const text = '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"/>';
+  const { invoke } = environment({ records: [record({ 'image/svg+xml': text })] });
+  const value = (await invoke('readClipboard')).value;
+  assert.equal(new TextDecoder().decode(value.get('bytes')), text);
+  assert.equal(value.get('mimeType'), 'image/svg+xml');
+});
+test('空 AVIF/SVG 和过大剪贴板图像不能进入 Dart 解码', async () => {
+  for (const entries of [{ 'image/avif': new ArrayBuffer(0) },
+    { 'image/svg+xml': 'x'.repeat(4 * 1024 * 1024 + 1) }]) {
+    const { invoke } = environment({ records: [record(entries)] });
+    assert.ok((await invoke('readClipboard')).error);
+  }
 });
 test('写图包含原格式和系统 PixelMap，失败同样释放资源', async () => {
   for (const failed of [false, true]) {

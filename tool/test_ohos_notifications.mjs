@@ -154,6 +154,7 @@ await test('short background task is bounded and old expiry cannot affect new ta
   oldCallback(); assert.equal(channel.events.length, count);
   callbacks.get(second.get('requestId'))();
   assert.equal(channel.events.at(-1).method, 'backgroundExpired');
+  assert.equal(channel.events.at(-1).args, second.get('requestId'));
   assert.equal(timers.size, 0);
 });
 await test('background expiry is not blocked by an unanswered permission prompt', async () => {
@@ -180,6 +181,7 @@ await test('expiry still stops Dart polling if OS cancellation reports failure',
   callbacks.get(budget.get('requestId'))();
   cancelError = false;
   assert.equal(channels.at(-1).events.at(-1).method, 'backgroundExpired');
+  assert.equal(channels.at(-1).events.at(-1).args, budget.get('requestId'));
   assert.equal(timers.size, 0);
 });
 await test('engine detach cancels short task and retains unread Want for next engine', async () => {

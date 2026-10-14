@@ -188,6 +188,10 @@ def prepare_native(repo, sources):
         tests += marker + (repo / "ohos_support/images/avif_tests.rs").read_bytes()
     lock = repo / "ohos_support/images/avif-Cargo.lock"
     prepared = {avif / "Cargo.toml": manifest.encode("utf-8"), build_path: build.encode("utf-8"), tests_path: tests}
+    animated_manifest = sources / "animated/crates/native_animated_image_codec/Cargo.toml"
+    animated_config = replace_once(animated_manifest.read_text(encoding="utf-8"),
+        'crate-type = ["cdylib", "staticlib"]', 'crate-type = ["cdylib", "staticlib", "rlib"]')
+    prepared[animated_manifest] = animated_config.encode("utf-8")
     animated_tests = sources / "animated/crates/native_animated_image_codec/tests"
     prepared[animated_tests / "ohos_codec.rs"] = (repo / "ohos_support/images/animated_tests.rs").read_bytes()
     for filename in ["two-frames.gif", "two-frames.png", "two-frames.webp"]:

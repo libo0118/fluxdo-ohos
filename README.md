@@ -1,5 +1,7 @@
 # cfluxdo
 
+> **鸿蒙移植 fork（实验阶段）**：[Actions 构建与产物](https://github.com/libo0118/fluxdo-ohos/actions/workflows/harmonyos.yml) · [支持范围与未完成事项](HARMONYOS.md)。成功的构建会提供未签名 HAP，尚未宣称全部功能可用。下文保留上游 Android 版本说明。
+
 > 面向国内网络环境的 [Linux.do](https://linux.do/) 第三方 Android 客户端，基于 [FluxDO](https://github.com/Lingyan000/fluxdo) 独立发行
 
 [![GitHub Release](https://img.shields.io/github/v/release/1molchuan/fluxdo?style=for-the-badge&logo=github&label=GitHub%20Releases)](https://github.com/1molchuan/fluxdo/releases)

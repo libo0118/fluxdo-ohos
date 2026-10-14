@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:app_icons/app_icons.dart';
 import 'package:flutter/services.dart';
-import 'package:super_clipboard/super_clipboard.dart';
+import '../../utils/clipboard_utils.dart';
 import '../../l10n/s.dart';
 import '../../utils/image_save_utils.dart';
 import '../../utils/share_utils.dart';
@@ -459,14 +459,7 @@ class ImageContextMenu {
         ToastService.showError(S.current.image_fetchFailed);
         return;
       }
-      final clipboard = SystemClipboard.instance;
-      if (clipboard == null) {
-        ToastService.showError(S.current.common_clipboardUnavailable);
-        return;
-      }
-      final item = DataWriterItem();
-      item.add(Formats.png(bytes));
-      await clipboard.write([item]);
+      await ClipboardUtils.writeImage(bytes);
       ToastService.showSuccess(S.current.image_copied);
     } catch (e) {
       debugPrint('[ImageContextMenu] copyImage error: $e');

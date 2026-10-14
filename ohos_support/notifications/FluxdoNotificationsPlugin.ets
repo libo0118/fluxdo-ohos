@@ -43,12 +43,12 @@ export default class FluxdoNotificationsPlugin implements FlutterPlugin, MethodC
     const payload = want.parameters?.[PAYLOAD];
     const token = want.parameters?.[TOKEN];
     if (typeof payload !== 'string' || !validPayload(payload) || typeof token !== 'string' ||
-      !/^[A-Za-z0-9._:-]{1,128}$/.test(token) || this.seen.includes(token)) return;
-    this.seen.push(token);
-    if (this.seen.length > 128) this.seen.shift();
-    this.taps.push(new NotificationTap(payload, token));
+      !/^[A-Za-z0-9._:-]{1,128}$/.test(token) || FluxdoNotificationsPlugin.seen.includes(token)) return;
+    FluxdoNotificationsPlugin.seen.push(token);
+    if (FluxdoNotificationsPlugin.seen.length > 128) FluxdoNotificationsPlugin.seen.shift();
+    FluxdoNotificationsPlugin.taps.push(new NotificationTap(payload, token));
     // 此处只发变更信号；点击留在原生队列，直到 Dart 主动读取。
-    this.active?.channel?.invokeMethod('notificationsChanged', null);
+    FluxdoNotificationsPlugin.active?.channel?.invokeMethod('notificationsChanged', null);
   }
 
   getUniqueClassName(): string { return 'FluxdoNotificationsPlugin'; }
@@ -120,11 +120,11 @@ export default class FluxdoNotificationsPlugin implements FlutterPlugin, MethodC
   }
 
   private async publish(call: MethodCall): Promise<boolean> {
-    const id = call.argument('id');
-    const title = call.argument('title');
-    const body = call.argument('body');
-    const rawPayload = call.argument('payload');
-    const progress = call.argument('progress');
+    const id: Object | null = call.argument('id');
+    const title: Object | null = call.argument('title');
+    const body: Object | null = call.argument('body');
+    const rawPayload: Object | null = call.argument('payload');
+    const progress: Object | null = call.argument('progress');
     if (typeof id !== 'number' || !Number.isInteger(id) || id < 0 || id > 2147483647 ||
       typeof title !== 'string' || title.trim().length === 0 || typeof body !== 'string' ||
       (rawPayload !== null && (typeof rawPayload !== 'string' || !validPayload(rawPayload)))) {
@@ -175,7 +175,7 @@ export default class FluxdoNotificationsPlugin implements FlutterPlugin, MethodC
       try {
         if (call.method === 'beginBackground') result.success(this.beginBackground());
         else {
-          const expected = call.argument('requestId');
+          const expected: Object | null = call.argument('requestId');
           if (expected !== null && (typeof expected !== 'number' || !Number.isInteger(expected) || expected < 0)) throw new Error('后台任务编号无效');
           if (expected === null || expected === this.backgroundId) this.endBackground();
           result.success(null);
@@ -199,7 +199,7 @@ export default class FluxdoNotificationsPlugin implements FlutterPlugin, MethodC
           }
           case 'clearTaps': FluxdoNotificationsPlugin.taps = []; result.success(null); break;
           case 'cancel': {
-            const id = call.argument('id');
+            const id: Object | null = call.argument('id');
             if (typeof id !== 'number' || !Number.isInteger(id) || id < 0 || id > 2147483647) throw new Error('通知编号无效');
             await notificationManager.cancel(id);
             result.success(null);

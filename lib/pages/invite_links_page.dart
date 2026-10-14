@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:app_icons/app_icons.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:share_plus/share_plus.dart';
+import '../utils/share_utils.dart';
 import 'package:m3e_ui/m3e_ui.dart';
 
 import '../constants.dart';
@@ -309,9 +309,7 @@ class _InviteLinksPageState extends ConsumerState<InviteLinksPage> {
   void _shareInviteLink() {
     final inviteLink = _effectiveInviteLink;
     if (inviteLink == null || inviteLink.isEmpty) return;
-    SharePlus.instance.share(
-      ShareParams(text: inviteLink, subject: S.current.invite_shareSubject),
-    );
+    ShareUtils.shareText(inviteLink, subject: S.current.invite_shareSubject);
   }
 
   String _normalizeErrorMessage(Object error) {

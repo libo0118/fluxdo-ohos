@@ -100,7 +100,7 @@ class _ExportHistoryPageState extends ConsumerState<ExportHistoryPage> {
   Future<void> _showEntryActions(ExportHistoryEntry entry) async {
     final isNotion = entry.targetType == ExportHistoryTarget.notion;
     final ref0 = entry.targetRef;
-    final isUri = ref0.startsWith('content://');
+    final isUri = PublicFileChannel.isContentUri(ref0);
     final hasLocalFile =
         entry.targetType == ExportHistoryTarget.localFile && ref0.isNotEmpty;
     final fileExists = hasLocalFile && (isUri || File(ref0).existsSync());
@@ -199,9 +199,14 @@ class _ExportHistoryPageState extends ConsumerState<ExportHistoryPage> {
       ToastService.showError(S.current.exportHistory_fileNotFound);
       return;
     }
+    final isUri = PublicFileChannel.isContentUri(path);
+    if (!isUri && !File(path).existsSync()) {
+      ToastService.showError(S.current.exportHistory_fileNotFound);
+      return;
+    }
     // Android 落公共目录 / SAF 另存为拿到的是 content uri，不能用 File 判断
     // 存在性，也不能交给 OpenFilex，只能让系统按 uri 授权打开。
-    if (path.startsWith('content://')) {
+    if (isUri || PublicFileChannel.isOhos) {
       // 落盘时没写 MIME_TYPE（避免 MediaStore 改扩展名），这里按格式补一个
       // 系统认得的类型，否则 ACTION_VIEW 匹配不到任何应用。
       final mime = entry.format == ExportHistoryFormat.html
@@ -211,10 +216,6 @@ class _ExportHistoryPageState extends ConsumerState<ExportHistoryPage> {
       if (!opened && mounted) {
         ToastService.showError(S.current.exportHistory_openFailed);
       }
-      return;
-    }
-    if (!File(path).existsSync()) {
-      ToastService.showError(S.current.exportHistory_fileNotFound);
       return;
     }
     if (PlatformUtils.isDesktop) {

@@ -6,7 +6,7 @@ import 'package:app_icons/app_icons.dart';
 import 'package:common_ui/common_ui.dart';
 import 'package:extended_image_lite/extended_image_lite.dart';
 import 'package:jovial_svg/jovial_svg.dart';
-import 'package:super_clipboard/super_clipboard.dart';
+import '../utils/clipboard_utils.dart';
 import '../services/discourse_cache_manager.dart';
 import '../services/dynamic_content_suspension_service.dart';
 import '../services/image_decode_spec_memo.dart';
@@ -808,14 +808,7 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage>
     final bytes = widget.imageBytes;
     if (bytes == null || bytes.isEmpty) return;
     try {
-      final clipboard = SystemClipboard.instance;
-      if (clipboard == null) {
-        ToastService.showError(S.current.common_clipboardUnavailable);
-        return;
-      }
-      final item = DataWriterItem();
-      item.add(Formats.png(bytes));
-      await clipboard.write([item]);
+      await ClipboardUtils.writeImage(bytes);
       if (mounted) ToastService.showSuccess(S.current.image_copied);
     } catch (e) {
       debugPrint('[ImageViewerPage] copyMemoryImage error: $e');

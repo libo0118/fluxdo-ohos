@@ -277,8 +277,10 @@ class _DownloadListPageState extends ConsumerState<DownloadListPage> {
       ToastService.showError(S.current.myBrowser_fileNotFound);
       return;
     }
-    final result = await OpenFilex.open(item.savePath, type: item.mimeType);
-    if (result.type != ResultType.done && mounted) {
+    final opened = PublicFileChannel.isOhos
+        ? await PublicFileChannel.openUri(item.savePath, mimeType: item.mimeType)
+        : (await OpenFilex.open(item.savePath, type: item.mimeType)).type == ResultType.done;
+    if (!opened && mounted) {
       // 打开失败就说打不开:原先回退成「另存为对话框」,用户想打开却被要求
       // 再存一份,语义不通
       ToastService.showError(S.current.exportHistory_openFailed);

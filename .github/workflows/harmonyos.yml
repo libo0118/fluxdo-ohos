@@ -120,6 +120,8 @@ jobs:
           exec > >(tee -a setup-ohos.log) 2>&1
           flutter --version
           flutter create --platforms=ohos --org=com.github.libo0118 --project-name=fluxdo --no-pub .
+          # shortcut: OHOS DoH 库尚未接入；保留声明的资源目录，移植代理时恢复证书生成。
+          mkdir -p assets/certs
           flutter pub get 2>&1 | tee pub-get-ohos.log
           dart tool/project_prep.dart test
       - name: Apply scoped OHOS compatibility patches and test

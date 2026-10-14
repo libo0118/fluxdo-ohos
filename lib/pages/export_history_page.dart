@@ -188,7 +188,9 @@ class _ExportHistoryPageState extends ConsumerState<ExportHistoryPage> {
         break;
       case ExportHistoryTarget.shared:
         // 分享出去的没有本地副本可打开，说清楚而不是报「文件已不存在」
-        ToastService.showInfo(S.current.exportHistory_sharedNoFile);
+        ToastService.showInfo(PublicFileChannel.isOhos
+            ? S.current.exportHistory_shareInitiatedNoFile
+            : S.current.exportHistory_sharedNoFile);
         break;
     }
   }
@@ -464,6 +466,8 @@ class _ExportEntryCard extends StatelessWidget {
                             ),
                           if (entry.size != null && entry.size! > 0)
                             Text(_formatSize(entry.size!)),
+                          if (PublicFileChannel.isOhos && entry.targetType == ExportHistoryTarget.shared)
+                            Text(context.l10n.export_shareStarted),
                           if (failed)
                             Text(
                               context.l10n.exportHistory_statusFailed,

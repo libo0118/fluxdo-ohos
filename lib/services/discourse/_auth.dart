@@ -1603,7 +1603,7 @@ mixin _AuthMixin on _DiscourseServiceBase {
     );
 
     // 先切断在途请求，避免失效会话继续产生 403 噪声
-    AuthSession().advance();
+    AuthSession().advanceForLogout();
 
     try {
       // callApi: false —— 会话已被服务端撤销，再调 DELETE /session 只会 403
@@ -1655,7 +1655,7 @@ mixin _AuthMixin on _DiscourseServiceBase {
 
     // ===== 第一步：立即切断所有在途请求 =====
     // 先于 logout 执行，防止用户在失效状态下继续操作产生更多 403
-    AuthSession().advance();
+    AuthSession().advanceForLogout();
 
     // 收集 _t cookie 诊断信息（不含实际值，仅状态）
     final jarTToken = await _cookieJar.getTToken();
@@ -2069,7 +2069,7 @@ mixin _AuthMixin on _DiscourseServiceBase {
   /// 登出
   Future<void> logout({bool callApi = true, bool refreshPreload = true}) async {
     // ===== 第一步：切断所有旧请求 =====
-    AuthSession().advance();
+    AuthSession().advanceForLogout();
 
     // ===== 第二步：主动停止后台 Service =====
     MessageBusService().stopAll();

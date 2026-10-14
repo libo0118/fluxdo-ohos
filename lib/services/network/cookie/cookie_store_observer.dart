@@ -3,8 +3,13 @@ import 'dart:io' as io;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import 'session_cookie_sentinel.dart';
+import 'boundary_sync_service.dart';
+import 'cookie_jar_service.dart';
+import '../../auth_session.dart';
+import '../../../constants.dart';
 
 /// 监听 WV cookie store 的外部变化,触发 sweep。
 ///
@@ -19,9 +24,23 @@ import 'session_cookie_sentinel.dart';
 ///    抑制通知, 避免 sweep → setCookie → 又通知 → sweep 死循环
 ///
 /// 已知 url 由 [registerUrl] 维护 (通常在 Priming 时 register)。
+/// OHOS 只消费当前主站页面的定向通知，不清扫历史注册 URL。
 class CookieStoreObserver {
-  CookieStoreObserver._();
+  CookieStoreObserver._()
+      : _boundarySync = BoundarySyncService.instance,
+        _ohosForTest = null;
   static final CookieStoreObserver instance = CookieStoreObserver._();
+
+  @visibleForTesting
+  CookieStoreObserver.forTest({
+    required BoundarySyncService boundarySync,
+    bool isOhos = true,
+  }) : _boundarySync = boundarySync,
+       _ohosForTest = isOhos;
+
+  final BoundarySyncService _boundarySync;
+  final bool? _ohosForTest;
+  bool get _isOhos => _ohosForTest ?? io.Platform.operatingSystem == 'ohos';
 
   static const _channel = MethodChannel('com.fluxdo/cookie_observer');
   static const Duration _debounceWindow = Duration(milliseconds: 500);
@@ -29,6 +48,26 @@ class CookieStoreObserver {
   bool _attached = false;
   Timer? _debounce;
   final Set<String> _knownUrls = {};
+  final Map<String, int> _ohosPendingUrls = {};
+  bool _sweeping = false;
+
+  Future<void> notifyOhosWebViewChange(InAppWebViewController controller) async {
+    if (!_isOhos) return;
+    final generation = AuthSession().generation;
+    try {
+      final raw = await controller.getUrl();
+      final uri = raw == null ? null : Uri.tryParse(raw.toString());
+      final trusted = Uri.parse(AppConstants.baseUrl);
+      if (uri == null || uri.scheme != 'https' || uri.host != trusted.host ||
+          uri.port != trusted.port || uri.userInfo.isNotEmpty ||
+          !AuthSession().isValid(generation)) return;
+      // The native snapshot stays local. Coalesce paths for the same trusted origin.
+      _ohosPendingUrls[uri.replace(query: '', fragment: '').toString()] = generation;
+      _onCookiesChanged();
+    } catch (_) {
+      // Navigation/disposal may invalidate the controller between the empty signal and URL read.
+    }
+  }
 
   /// native observer 支持的平台 (macOS / iOS)。
   ///
@@ -74,7 +113,15 @@ class CookieStoreObserver {
     _debounce?.cancel();
     _debounce = null;
     _knownUrls.clear();
+    _ohosPendingUrls.clear();
     _attached = false;
+  }
+
+  @visibleForTesting
+  Future<void> flushForTest() {
+    _debounce?.cancel();
+    _debounce = null;
+    return _doSweep();
   }
 
   Future<dynamic> _handleNativeCall(MethodCall call) async {
@@ -90,6 +137,29 @@ class CookieStoreObserver {
   }
 
   Future<void> _doSweep() async {
+    if (!_isOhos) return _sweepKnownUrls();
+    if (_sweeping) return;
+    _sweeping = true;
+    try {
+      final pending = Map<String, int>.from(_ohosPendingUrls);
+      _ohosPendingUrls.clear();
+      for (final entry in pending.entries) {
+        await _boundarySync.syncFromWebView(
+          currentUrl: entry.key,
+          requestGeneration: entry.value,
+          rejectLowConfidenceNonSessionCookies: true,
+          excludeCookieNames: AuthSession().isLogoutGeneration(entry.value)
+              ? CookieJarService.sessionCookieNames
+              : null,
+        );
+      }
+    } finally {
+      _sweeping = false;
+      if (_ohosPendingUrls.isNotEmpty) _onCookiesChanged();
+    }
+  }
+
+  Future<void> _sweepKnownUrls() async {
     final urls = _knownUrls.toList(growable: false);
     if (urls.isEmpty) return;
     debugPrint(

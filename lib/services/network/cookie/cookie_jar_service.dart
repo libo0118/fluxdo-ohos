@@ -26,6 +26,13 @@ class CookieJarService {
   factory CookieJarService() => _instance;
   CookieJarService._internal();
 
+  @visibleForTesting
+  CookieJarService.forTest({required CookieJar jar}) {
+    _cookieJar = jar;
+    _initialized = true;
+    _strategy = PlatformCookieStrategy.create();
+  }
+
   CookieJar? _cookieJar;
   bool _initialized = false;
   late final PlatformCookieStrategy _strategy;
@@ -130,8 +137,10 @@ class CookieJarService {
   Future<int> enforceAuthCookiePolicy({
     String reason = 'unknown',
     Iterable<String>? names,
+    bool Function()? isCurrent,
   }) async {
     if (!_initialized) await initialize();
+    if (isCurrent != null && !isCurrent()) return 0;
 
     final jar = _cookieJar;
     if (jar is! EnhancedPersistCookieJar) return 0;
@@ -145,9 +154,11 @@ class CookieJarService {
       if (targetNames.isEmpty) return 0;
 
       final all = await jar.readAllCookies();
+      if (isCurrent != null && !isCurrent()) return 0;
       var changed = 0;
 
       for (final name in targetNames) {
+        if (isCurrent != null && !isCurrent()) return changed;
         final candidates = all
             .where(
               (cookie) =>
@@ -165,6 +176,7 @@ class CookieJarService {
             baseUri,
             name,
             const [],
+            isCurrent: isCurrent,
           );
           if (removed > 0) {
             changed++;
@@ -184,9 +196,13 @@ class CookieJarService {
           continue;
         }
 
-        final removed = await jar.replaceByNameForSite(baseUri, name, [
-          normalized,
-        ]);
+        final removed = await jar.replaceByNameForSite(
+          baseUri,
+          name,
+          [normalized],
+          isCurrent: isCurrent,
+        );
+        if (isCurrent != null && !isCurrent()) return changed;
         changed++;
         debugPrint(
           '[CookieJar] Auth cookie policy normalized $name: '

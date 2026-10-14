@@ -19,12 +19,26 @@ import 'strategy/platform_cookie_strategy.dart';
 ///
 /// 只在边界时机调用，不做常态同步。
 class BoundarySyncService {
-  BoundarySyncService._internal();
+  BoundarySyncService._internal()
+      : _jar = CookieJarService(),
+        _strategy = PlatformCookieStrategy.create(),
+        _ohosForTest = null;
 
   static final BoundarySyncService instance = BoundarySyncService._internal();
 
-  final CookieJarService _jar = CookieJarService();
-  final PlatformCookieStrategy _strategy = PlatformCookieStrategy.create();
+  @visibleForTesting
+  BoundarySyncService.forTest({
+    required CookieJarService jar,
+    required PlatformCookieStrategy strategy,
+    bool isOhos = true,
+  }) : _jar = jar,
+       _strategy = strategy,
+       _ohosForTest = isOhos;
+
+  final CookieJarService _jar;
+  final PlatformCookieStrategy _strategy;
+  final bool? _ohosForTest;
+  bool get _isOhos => _ohosForTest ?? io.Platform.operatingSystem == 'ohos';
 
   /// 已记录过的良性双变体签名（会话级，防同一对变体随轮询反复刷日志）。
   final Set<String> _loggedBenignDuplicateSignatures = <String>{};
@@ -150,6 +164,7 @@ class BoundarySyncService {
   /// [currentUrl] 当前页面 URL，用于确定读取哪个域名的 cookie。
   /// [cookieNames] 只同步指定的 cookie 名；null 表示同步所有。
   /// [excludeCookieNames] 排除指定 cookie；用于 CF/预登录流程避免写回 session。
+  /// [rejectLowConfidenceNonSessionCookies] 自动通知要求完整快照，显式边界保留旧 SDK 许可。
   /// [trusted] 标记为权威写入（CF challenge 确认后），让写入升 version 盖过旧值。
   /// [acceptValues] cookie 名 → 只接受的值；用于 challenge 场景按确认的 fresh 值
   ///   过滤，排除 WebView 中可能残留的旧变体。
@@ -159,6 +174,7 @@ class BoundarySyncService {
     Set<String>? cookieNames,
     Set<String>? excludeCookieNames,
     bool allowLowConfidenceSessionCookies = false,
+    bool rejectLowConfidenceNonSessionCookies = false,
     int? requestGeneration,
     bool trusted = false,
     Map<String, String>? acceptValues,
@@ -166,13 +182,15 @@ class BoundarySyncService {
     final url = currentUrl ?? AppConstants.baseUrl;
     final uri = Uri.parse(url);
     final host = uri.host;
+    final generation =
+        requestGeneration ?? (_isOhos ? AuthSession().generation : null);
+    bool isCurrent() => generation == null || AuthSession().isValid(generation);
 
     try {
-      if (requestGeneration != null &&
-          !AuthSession().isValid(requestGeneration)) {
+      if (!isCurrent()) {
         debugPrint(
           '[BoundarySync] 跳过过期会话同步: '
-          'gen=$requestGeneration current=${AuthSession().generation}',
+          'gen=$generation current=${AuthSession().generation}',
         );
         return;
       }
@@ -273,6 +291,11 @@ class BoundarySyncService {
           wc.name,
         );
         final lowConfidenceSnapshot = _isLowConfidenceWebViewCookie(wc);
+        if (rejectLowConfidenceNonSessionCookies &&
+            !isSessionCookie &&
+            lowConfidenceSnapshot) {
+          continue;
+        }
         if (isSessionCookie &&
             lowConfidenceSnapshot &&
             !allowLowConfidenceSessionCookies) {
@@ -409,22 +432,31 @@ class BoundarySyncService {
         return;
       }
 
-      if (requestGeneration != null &&
-          !AuthSession().isValid(requestGeneration)) {
+      if (!isCurrent()) {
         debugPrint(
           '[BoundarySync] 跳过过期会话写入: '
-          'gen=$requestGeneration current=${AuthSession().generation}',
+          'gen=$generation current=${AuthSession().generation}',
         );
         return;
       }
 
       if (!_jar.isInitialized) await _jar.initialize();
+      if (!isCurrent()) return;
       final jar = _jar.cookieJar;
-      if (trusted && jar is EnhancedPersistCookieJar) {
+      if (_isOhos && jar is EnhancedPersistCookieJar) {
+        final saved = await jar.saveFromResponseGuarded(
+          uri,
+          toSave,
+          isCurrent: isCurrent,
+          trusted: trusted,
+        );
+        if (!saved) return;
+      } else if (trusted && jar is EnhancedPersistCookieJar) {
         await jar.saveFromResponseTrusted(uri, toSave, trusted: true);
       } else {
         await jar.saveFromResponse(uri, toSave);
       }
+      if (_isOhos && !isCurrent()) return;
       final authNames = toSave
           .map((cookie) => cookie.name)
           .where(CookieJarService.hostOnlyCookieNames.contains)
@@ -433,6 +465,7 @@ class BoundarySyncService {
         await _jar.enforceAuthCookiePolicy(
           reason: 'boundary_sync',
           names: authNames,
+          isCurrent: _isOhos ? isCurrent : null,
         );
       }
       final syncedDetails = await _jar.getCookieDiagnosticsForRequest(

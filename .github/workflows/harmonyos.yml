@@ -123,16 +123,19 @@ jobs:
           python3 tool/prepare_ohos_identity.py
           mkdir -p assets/certs
           python3 tool/prepare_ohos_network.py --stage before-pub-get
+          python3 tool/prepare_ohos_media.py before-pub-get
           flutter pub get 2>&1 | tee pub-get-ohos.log
           dart tool/project_prep.dart test
           python3 tool/prepare_ohos_network.py --stage after-pub-get
           python3 tool/prepare_ohos_storage.py
+          python3 tool/prepare_ohos_media.py after-pub-get
       - name: Validate protected credential storage
         run: |
           set -euo pipefail
           npm install --prefix "$RUNNER_TEMP/ohos-tests" --no-save --ignore-scripts typescript@6.0.3
           python3 tool/prepare_ohos_network.py --self-test
           python3 tool/prepare_ohos_storage.py --self-test
+          python3 tool/prepare_ohos_media.py --self-test
           node tool/test_ohos_secure_storage.mjs "$RUNNER_TEMP/ohos-tests/node_modules/typescript" "$GITHUB_WORKSPACE" 2>&1 | tee storage-ohos.log
       - name: Compile the actual OHOS network libraries
         run: |

@@ -8,6 +8,8 @@ import tempfile
 from urllib.parse import urljoin, urlsplit
 from urllib.request import url2pathname
 
+from prepare_ohos_identity import read_json
+
 
 VIDEO_REF = "6b8fa1e5d3bf085bfe56423555d4ff608459ca4d"
 AUDIO_REF = "6f251f641aeb5cb4e07e6b6edbb87b5983f4b2d0"
@@ -501,8 +503,7 @@ def prepare(repo, stage):
     prepared[repo / "ohos/entry/src/main/ets/fluxdo/media" / native.name] = native.read_bytes()
     manifest_path = repo / "ohos/entry/src/main/module.json5"
     strings_path = repo / "ohos/entry/src/main/resources/base/element/string.json"
-    # Flutter 模板使用 JSON 子集；拒绝静默改坏含额外 JSON5 语法的自定义工程。
-    manifest, strings = patch_permissions(json.loads(manifest_path.read_text(encoding="utf-8")), json.loads(strings_path.read_text(encoding="utf-8")))
+    manifest, strings = patch_permissions(read_json(manifest_path), read_json(strings_path))
     prepared[manifest_path] = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     prepared[strings_path] = (json.dumps(strings, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     return write_prepared(prepared)
@@ -538,6 +539,11 @@ def self_test(source_root=None):
     assert manifest["module"]["requestPermissions"][1]["usedScene"]["when"] == "inuse"
     with tempfile.TemporaryDirectory(prefix="fluxdo-media-") as temporary:
         base = Path(temporary)
+        manifest_path = base / "module.json5"
+        manifest_path.write_text('{/* Flutter template */ "module": {"url": "https://linux.do/a,}", "requestPermissions": [{"name": "ohos.permission.INTERNET"},],},}', encoding="utf-8")
+        parsed = read_json(manifest_path)["module"]
+        assert parsed["url"] == "https://linux.do/a,}"
+        assert parsed["requestPermissions"] == [{"name": "ohos.permission.INTERNET"}]
         config = base / ".dart_tool/package_config.json"
         config.parent.mkdir()
         package = base / "package with spaces"
@@ -594,7 +600,7 @@ def self_test(source_root=None):
             entry_path.parent.mkdir(parents=True)
             entry_path.write_text(entry, encoding="utf-8")
             manifest_path = repo / "ohos/entry/src/main/module.json5"
-            manifest_path.write_text(json.dumps({"module": {"requestPermissions": [{"name": "ohos.permission.INTERNET"}]}}), encoding="utf-8")
+            manifest_path.write_text('// Flutter JSON5 template\n{"module": {"requestPermissions": [{"name": "ohos.permission.INTERNET"},],},}', encoding="utf-8")
             strings_path = repo / "ohos/entry/src/main/resources/base/element/string.json"
             strings_path.parent.mkdir(parents=True)
             strings_path.write_text(json.dumps({"string": []}), encoding="utf-8")

@@ -17,7 +17,7 @@ import 'raw_cookie_writer_fallback.dart';
 ///
 /// 平台支持矩阵:
 /// - Android / iOS / macOS: native method channel `com.fluxdo/raw_cookie`
-/// - Windows / Linux: Dart 层 [RawCookieWriterFallback] 包装
+/// - Windows / Linux / OHOS: Dart 层 [RawCookieWriterFallback] 包装
 ///   flutter_inappwebview 的 CookieManager (无需 native)
 class RawCookieWriter {
   RawCookieWriter._();
@@ -35,7 +35,10 @@ class RawCookieWriter {
       io.Platform.isAndroid || io.Platform.isIOS || io.Platform.isMacOS;
 
   /// 当前平台是否走 Dart fallback (flutter_inappwebview CookieManager)。
-  bool get _hasDartFallback => io.Platform.isWindows || io.Platform.isLinux;
+  bool get _hasDartFallback =>
+      io.Platform.isWindows ||
+      io.Platform.isLinux ||
+      io.Platform.operatingSystem == 'ohos';
 
   /// 是否支持当前平台 (native 或 Dart fallback 任一可用即支持)。
   bool get isSupported => _hasNativeChannel || _hasDartFallback;

@@ -8,7 +8,6 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import 'package:super_clipboard/super_clipboard.dart';
 
 import '../../providers/preferences_provider.dart';
 import '../../services/discourse_cook_service.dart';
@@ -566,24 +565,19 @@ class MarkdownEditorState extends ConsumerState<MarkdownEditor> {
   /// 自定义粘贴回调：优先粘贴图片，无图片时回退文本粘贴
   void _handleCustomPaste(EditableTextState editableTextState) async {
     editableTextState.hideToolbar();
-
-    final hasImage = await MarkdownToolbarState.clipboardHasImage();
-    if (hasImage) {
-      final clipboard = SystemClipboard.instance;
-      if (clipboard != null) {
-        final reader = await clipboard.read();
-        final result = await MarkdownToolbarState.readImageFromReader(reader);
-        if (result != null) {
-          final (bytes, ext) = result;
-          final fileName =
-              'paste_${DateTime.now().millisecondsSinceEpoch}.$ext';
-          _toolbarKey.currentState?.uploadImageFromBytes(
-            bytes: bytes,
-            fileName: fileName,
-          );
-          return;
-        }
+    try {
+      final result = await MarkdownToolbarState.readClipboardImage();
+      if (result != null) {
+        final (bytes, ext) = result;
+        final fileName = 'paste_${DateTime.now().millisecondsSinceEpoch}.$ext';
+        _toolbarKey.currentState?.uploadImageFromBytes(
+          bytes: bytes,
+          fileName: fileName,
+        );
+        return;
       }
+    } catch (_) {
+      // 权限拒绝或图片读取失败时，仍保留系统的文本粘贴路径。
     }
     // 无图片，回退到默认文本粘贴
     editableTextState.pasteText(SelectionChangedCause.toolbar);

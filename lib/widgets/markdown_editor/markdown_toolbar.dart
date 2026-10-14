@@ -22,6 +22,7 @@ import '../../services/app_error_handler.dart';
 import '../../services/discourse/discourse_service.dart';
 import '../../services/toast_service.dart';
 import '../../utils/platform_utils.dart';
+import '../../utils/clipboard_utils.dart';
 import '../common/fading_edge_scroll_view.dart';
 import '../content/discourse_html_content/image_utils.dart';
 import 'composer_shortcuts.dart';
@@ -191,6 +192,10 @@ class MarkdownToolbarState extends State<MarkdownToolbar> {
 
   /// 快速检查剪贴板是否有图片
   static Future<bool> clipboardHasImage() async {
+    if (ClipboardUtils.isOhos) {
+      final content = await ClipboardUtils.readOhos();
+      return content.image?.isNotEmpty == true;
+    }
     final clipboard = SystemClipboard.instance;
     if (clipboard == null) return false;
     final reader = await clipboard.read();
@@ -203,10 +208,7 @@ class MarkdownToolbarState extends State<MarkdownToolbar> {
   /// 处理粘贴事件：仅检测剪贴板图片，文本粘贴由 TextField 自行处理
   Future<void> _handlePasteImage() async {
     try {
-      final clipboard = SystemClipboard.instance;
-      if (clipboard == null) return;
-      final reader = await clipboard.read();
-      final result = await readImageFromReader(reader);
+      final result = await readClipboardImage();
       if (result != null) {
         final (bytes, ext) = result;
         final tempDir = await getTemporaryDirectory();
@@ -220,6 +222,18 @@ class MarkdownToolbarState extends State<MarkdownToolbar> {
     } catch (_) {
       // 读取图片失败，忽略，文本粘贴由 TextField 自行处理
     }
+  }
+
+  static Future<(Uint8List, String)?> readClipboardImage() async {
+    if (ClipboardUtils.isOhos) {
+      final content = await ClipboardUtils.readOhos();
+      final bytes = content.image;
+      if (bytes == null || bytes.isEmpty || content.extension == null) return null;
+      return (bytes, content.extension!);
+    }
+    final clipboard = SystemClipboard.instance;
+    if (clipboard == null) return null;
+    return readImageFromReader(await clipboard.read());
   }
 
   /// 从字节数据上传图片（供 markdown_editor.dart 调用）

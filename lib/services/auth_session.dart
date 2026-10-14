@@ -9,6 +9,7 @@ class AuthSession {
   AuthSession._internal();
 
   int _generation = 0;
+  int? _logoutGeneration;
   CancelToken _cancelToken = CancelToken();
 
   /// 当前会话代
@@ -21,6 +22,7 @@ class AuthSession {
   /// 返回新的 generation
   int advance() {
     _generation++;
+    _logoutGeneration = null;
     // 取消所有携带旧 CancelToken 的请求
     if (!_cancelToken.isCancelled) {
       _cancelToken.cancel('[AuthSession] 会话代变更: $_generation');
@@ -29,6 +31,15 @@ class AuthSession {
     debugPrint('[AuthSession] 推进到 generation=$_generation');
     return _generation;
   }
+
+  /// 登出后迟到的 WebView 通知不能重新采纳旧登录 Cookie。
+  int advanceForLogout() {
+    final generation = advance();
+    _logoutGeneration = generation;
+    return generation;
+  }
+
+  bool isLogoutGeneration(int generation) => generation == _logoutGeneration;
 
   /// 检查给定的 generation 是否仍然有效
   bool isValid(int gen) => gen == _generation;

@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -83,25 +84,32 @@ class UpdateInfo {
 
 /// 应用更新检查服务
 class UpdateService {
-  // cfluxdo 从 fork 的 Release 检查更新(包名与签名都和官方版不同,不能装官方包)
-  static const String _repository = '1molchuan/fluxdo';
-  static const String _apiUrl =
+  String get _repository => _isOhos ? 'libo0118/fluxdo-ohos' : '1molchuan/fluxdo';
+  String get repositoryUrl => 'https://github.com/$_repository';
+  static const harmonyActionsUrl = 'https://github.com/libo0118/fluxdo-ohos/actions/workflows/harmonyos.yml';
+  String get _apiUrl =>
       'https://api.github.com/repos/$_repository/releases/latest';
   static const String _autoCheckUpdateKey = 'auto_check_update';
   static const String _githubProxyKey = 'github_proxy_url';
-  static const String _cacheKey = 'update_cache';
-  static const String _cacheTimeKey = 'update_cache_time';
-  static const String _etagKey = 'update_etag';
+  String get _cacheKey => _isOhos ? 'ohos_update_cache' : 'update_cache';
+  String get _cacheTimeKey => _isOhos ? 'ohos_update_cache_time' : 'update_cache_time';
+  String get _etagKey => _isOhos ? 'ohos_update_etag' : 'update_etag';
 
   // 缓存有效期（1 小时）
   static const Duration _cacheValidDuration = Duration(hours: 1);
 
   final Dio _dio;
   final SharedPreferences? _prefs;
+  final bool _isOhos;
 
   UpdateService({Dio? dio, SharedPreferences? prefs})
       : _dio = dio ?? Dio(),
-        _prefs = prefs;
+        _prefs = prefs,
+        _isOhos = Platform.operatingSystem == 'ohos';
+
+  @visibleForTesting
+  UpdateService.forTest({required Dio dio, required SharedPreferences prefs, required bool isOhos})
+      : _dio = dio, _prefs = prefs, _isOhos = isOhos;
 
   /// 获取自动检查更新设置
   bool getAutoCheckUpdate() {
@@ -187,7 +195,7 @@ class UpdateService {
     try {
       // 自动检查使用缓存
       final updateInfo = await checkForUpdate(useCache: true);
-      return updateInfo.hasUpdate ? updateInfo : null;
+      return updateInfo?.hasUpdate == true ? updateInfo : null;
     } catch (e) {
       // 自动检查失败时静默处理
       return null;
@@ -197,9 +205,9 @@ class UpdateService {
   /// 检查更新
   ///
   /// [useCache] 是否使用缓存，默认 false（手动检查强制刷新）
-  /// 返回 [UpdateInfo] 如果检查成功
+  /// 返回 [UpdateInfo]；鸿蒙 fork 尚无 Release 时返回 null。
   /// 抛出异常如果检查失败
-  Future<UpdateInfo> checkForUpdate({bool useCache = false}) async {
+  Future<UpdateInfo?> checkForUpdate({bool useCache = false}) async {
     final currentVersion = await getCurrentVersion();
 
     // 检查缓存是否有效
@@ -227,6 +235,12 @@ class UpdateService {
       }
       return updateInfo;
     } on DioException catch (e) {
+      if (_isOhos && e.response?.statusCode == 404) {
+        await _prefs?.remove(_cacheKey);
+        await _prefs?.remove(_cacheTimeKey);
+        await _prefs?.remove(_etagKey);
+        return null;
+      }
       // 403/429 速率限制时尝试使用缓存
       if (e.response?.statusCode == 403 || e.response?.statusCode == 429) {
         final cachedInfo =

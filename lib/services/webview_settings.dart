@@ -11,6 +11,8 @@ import '../constants.dart';
 import 'eruda_settings_service.dart';
 import 'log/log_writer.dart';
 import 'network/doh/network_settings_service.dart';
+import 'network/doh_proxy/ohos_webview_trust.dart';
+import 'network/cookie/cookie_store_observer.dart';
 
 /// WebView 配置工具类
 /// 区分 Headless（后台同步）和 Visible（用户可见页面）两种场景
@@ -93,6 +95,21 @@ class WebViewSettings {
   static Future<ServerTrustAuthResponse?> handleServerTrustAuthRequest(
     URLAuthenticationChallenge challenge,
   ) async {
+    if (Platform.operatingSystem == 'ohos') {
+      final space = challenge.protectionSpace;
+      final network = NetworkSettingsService.instance;
+      final allowed = await authorizeOhosWebViewLeaf(
+        protocol: space.protocol,
+        host: space.host,
+        error: space.sslError?.code?.toValue(),
+        leaf: space.sslCertificate?.x509Certificate?.encoded,
+        isProxyCurrent: () => network.isOhosWebViewProxyActive,
+        matchesCurrentLeaf: network.matchesOhosWebViewLeaf,
+      );
+      return ServerTrustAuthResponse(action: allowed
+          ? ServerTrustAuthResponseAction.PROCEED
+          : ServerTrustAuthResponseAction.CANCEL);
+    }
     // Android/macOS: gateway MITM 模式下放行代理 CA 证书。
     // iOS: 使用隧道模式（非 MITM），不会触发代理 CA 信任问题。
     if (NetworkSettingsService.instance.isGatewayMode) {
@@ -187,6 +204,52 @@ class WebViewSettings {
   /// 用 @babel/preset-env + core-js + esbuild 按 browserslist (iOS >= 15.0) 自动打包。
   /// 抬基线 / 升 polyfill 全部去那边改。
   static const _polyfillAssetPath = 'assets/polyfill/compat-polyfill.js';
+  static const _ohosCookieSignalJs = r'''
+(function () {
+  if (window.__fluxdoOhosCookieSignal) return;
+  window.__fluxdoOhosCookieSignal = true;
+  var pending = false, queued = false;
+  var ready = !!(window.flutter_inappwebview && window.flutter_inappwebview._platformReady);
+  function signal() {
+    pending = true;
+    if (!ready || queued) return;
+    queued = true;
+    Promise.resolve().then(function () {
+      queued = false;
+      var bridge = window.flutter_inappwebview;
+      if (!pending || !bridge || typeof bridge.callHandler !== 'function') return;
+      pending = false;
+      try {
+        var reply = bridge.callHandler('onOhosCookieResponse');
+        if (reply && reply.catch) reply.catch(function () {});
+      } catch (_) { pending = true; }
+    });
+  }
+  window.addEventListener('flutterInAppWebViewPlatformReady', function () {
+    ready = true;
+    if (pending) signal();
+  });
+  window.addEventListener('load', signal, {once: true});
+  var fetch = window.fetch;
+  if (typeof fetch === 'function') window.fetch = function () {
+    return fetch.apply(this, arguments).then(function (response) {
+      signal(); return response;
+    }, function (error) { signal(); throw error; });
+  };
+  if (window.XMLHttpRequest) {
+    var send = window.XMLHttpRequest.prototype.send;
+    window.XMLHttpRequest.prototype.send = function () {
+      this.addEventListener('loadend', signal, {once: true});
+      return send.apply(this, arguments);
+    };
+  }
+})();
+''';
+  static final _ohosCookieSignalScript = UserScript(
+    source: _ohosCookieSignalJs,
+    injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
+    forMainFrameOnly: true,
+  );
   static UnmodifiableListView<UserScript>? _compatPolyfillScripts;
   static bool _polyfillLoadAttempted = false;
 
@@ -247,6 +310,8 @@ class WebViewSettings {
   /// bundle 内的 eruda 正常初始化。
   static UnmodifiableListView<UserScript> get compatPolyfillScripts {
     final cached = _compatPolyfillScripts;
+    final ohosScripts = Platform.operatingSystem == 'ohos'
+        ? [_ohosCookieSignalScript] : <UserScript>[];
     if (cached == null) {
       if (!_polyfillLoadAttempted) {
         debugPrint(
@@ -254,12 +319,12 @@ class WebViewSettings {
           '老 WebView 兼容性会缺失。请检查 main.dart 初始化序列。',
         );
       }
-      return UnmodifiableListView<UserScript>([]);
+      return UnmodifiableListView<UserScript>(ohosScripts);
     }
     if (!ErudaSettingsService.instance.enabled) {
-      return UnmodifiableListView<UserScript>([_erudaDisableScript, ...cached]);
+      return UnmodifiableListView<UserScript>([...ohosScripts, _erudaDisableScript, ...cached]);
     }
-    return cached;
+    return ohosScripts.isEmpty ? cached : UnmodifiableListView<UserScript>([...ohosScripts, ...cached]);
   }
 
   /// 注册 JS 错误 / lifecycle 回传 handler，把 WebView 内的事件落到 LogWriter。
@@ -274,6 +339,12 @@ class WebViewSettings {
   /// 这些都是 WebView 诊断信息：日常浏览、贴内嵌入(iframe)、外链页面的 JS 报错
   /// 与 app 自身无关，常态全部丢弃；排查老设备白屏/兼容性时开开发者模式即可收集。
   static void registerJsErrorReporter(InAppWebViewController controller) {
+    if (Platform.operatingSystem == 'ohos') {
+      controller.addJavaScriptHandler(
+        handlerName: 'onOhosCookieResponse',
+        callback: (_) => CookieStoreObserver.instance.notifyOhosWebViewChange(controller),
+      );
+    }
     controller.addJavaScriptHandler(
       handlerName: 'onWebViewJsError',
       callback: (args) {

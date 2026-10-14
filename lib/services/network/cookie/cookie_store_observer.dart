@@ -62,7 +62,7 @@ class CookieStoreObserver {
           uri.port != trusted.port || uri.userInfo.isNotEmpty ||
           !AuthSession().isValid(generation)) return;
       // The native snapshot stays local. Coalesce paths for the same trusted origin.
-      _ohosPendingUrls[uri.replace(query: '', fragment: '').toString()] = generation;
+      _ohosPendingUrls[uri.removeFragment().toString().split('?').first] = generation;
       _onCookiesChanged();
     } catch (_) {
       // Navigation/disposal may invalidate the controller between the empty signal and URL read.

@@ -18,6 +18,8 @@ import '../../../services/media/playback_position_store.dart';
 /// (全屏页持有),控制器安然无恙;宿主滚回来重建时 obtain() 命中现存
 /// session 直接复用(顺带获得重进秒开)。
 class VideoPlayerSession {
+  static final Set<VideoPlayerSession> _playingSessions = {};
+
   VideoPlayerSession._({
     required this.url,
     required this.controller,
@@ -69,7 +71,12 @@ class VideoPlayerSession {
     final playing = value.isPlaying;
     if (playing != _wakelockOn) {
       _wakelockOn = playing;
-      unawaited(WakelockPlus.toggle(enable: playing));
+      if (playing) {
+        _playingSessions.add(this);
+      } else {
+        _playingSessions.remove(this);
+      }
+      unawaited(WakelockPlus.toggle(enable: _playingSessions.isNotEmpty));
     }
     if (playing) {
       _positionSaveTimer ??= Timer.periodic(
@@ -107,7 +114,8 @@ class VideoPlayerSession {
     // 快速滚动中批量销毁的暂停视频各写一次磁盘
     unawaited(PlaybackPositionStore.instance.flush());
     if (_wakelockOn) {
-      unawaited(WakelockPlus.disable());
+      _playingSessions.remove(this);
+      unawaited(WakelockPlus.toggle(enable: _playingSessions.isNotEmpty));
     }
     controller.removeListener(_onControllerTick);
     fullscreenNotifier.dispose();

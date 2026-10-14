@@ -6,7 +6,7 @@ import 'package:ai_model_manager/ai_model_manager.dart';
 import 'package:flutter/material.dart';
 import 'package:app_icons/app_icons.dart';
 import 'package:flutter/services.dart';
-import 'package:super_clipboard/super_clipboard.dart';
+import '../../../utils/clipboard_utils.dart';
 import 'package:m3e_ui/m3e_ui.dart';
 import '../../../l10n/s.dart';
 import '../../../pages/image_viewer_page.dart';
@@ -401,16 +401,7 @@ class AiChatMessageItem extends StatelessWidget {
       return;
     }
     try {
-      final clipboard = SystemClipboard.instance;
-      if (clipboard == null) {
-        if (context.mounted) {
-          ToastService.showError(context.l10n.ai_imageCopyFailed);
-        }
-        return;
-      }
-      final item = DataWriterItem();
-      item.add(Formats.png(bytes));
-      await clipboard.write([item]);
+      await ClipboardUtils.writeImage(bytes);
       if (context.mounted) {
         ToastService.showSuccess(context.l10n.ai_imageCopied);
       }

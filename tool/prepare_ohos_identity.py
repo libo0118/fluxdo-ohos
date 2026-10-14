@@ -59,16 +59,22 @@ def prepare(repo):
     app["bundleName"] = bundle
     app["vendor"] = "1molchuan"
     prepared = {app_path: app_config}
+    label_targets = {}
     for relative, resource in (
-        ("ohos/AppScope/resources/base/element/string.json", "app_name"),
-        ("ohos/entry/src/main/resources/base/element/string.json", "EntryAbility_label"),
+        ("ohos/AppScope/resources", "app_name"),
+        ("ohos/entry/src/main/resources", "EntryAbility_label"),
     ):
-        path = repo / relative
-        data = read_json(path)
-        entries = [entry for entry in data["string"] if entry["name"] == resource]
-        assert len(entries) == 1
-        entries[0]["value"] = label
-        prepared[path] = data
+        root = repo / relative
+        base = root / "base/element/string.json"
+        assert base.is_file(), f"缺少默认名称资源：{base}"
+        for path in sorted(root.glob("**/element/string.json")):
+            data = read_json(path)
+            entries = [entry for entry in data["string"] if entry["name"] == resource]
+            assert len(entries) <= 1 and (path != base or len(entries) == 1), f"名称资源不唯一：{path}"
+            if entries:
+                entries[0]["value"] = label
+                prepared[path] = data
+                label_targets[path] = resource
     icon_targets = [
         repo / "ohos/AppScope/resources/base/media/app_icon.png",
         repo / "ohos/entry/src/main/resources/base/media/icon.png",
@@ -79,6 +85,9 @@ def prepare(repo):
         newline = "\r\n" if b"\r\n" in path.read_bytes() else "\n"
         text = (json.dumps(data, ensure_ascii=False, indent=2) + "\n").replace("\n", newline)
         path.write_bytes(text.encode("utf-8"))
+    for path, resource in label_targets.items():
+        entries = [entry for entry in read_json(path)["string"] if entry["name"] == resource]
+        assert len(entries) == 1 and entries[0]["value"] == label, f"名称写入校验失败：{path}"
     for path in icon_targets:
         path.write_bytes(icon)
     print(f"已恢复 {bundle} / {label} / {icon_name[1]} ({width}x{height})")

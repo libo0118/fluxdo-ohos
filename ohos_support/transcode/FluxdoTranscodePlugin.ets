@@ -149,7 +149,7 @@ export default class FluxdoTranscodePlugin implements FlutterPlugin, MethodCallH
   onMethodCall(call: MethodCall, result: MethodResult): void {
     switch (call.method) {
       case 'probe':
-        this.probe(call.arguments).then((info: ProbeInfo | null): void => result.success(info));
+        this.probe(call.args as Object | null).then((info: ProbeInfo | null): void => result.success(info));
         break;
       case 'progress':
         result.success(this.lastProgress);
@@ -242,10 +242,10 @@ export default class FluxdoTranscodePlugin implements FlutterPlugin, MethodCallH
       await transcoder.prepare(config);
       prepared = true;
       if (job.cancelled) return;
-      if (job.error !== null) throw new Error(job.error.message);
+      if (job.error !== null) throw job.error as Error;
       await transcoder.start();
       await job.wait();
-      if (job.error !== null) throw new Error(job.error.message);
+      if (job.error !== null) throw job.error as Error;
       success = job.complete && !job.cancelled;
     } catch (error) {
       failure = error as Error;
@@ -279,7 +279,7 @@ export default class FluxdoTranscodePlugin implements FlutterPlugin, MethodCallH
       if (this.job === job) this.job = null;
       if (job.cancelled) job.result.success(false);
       else if (success) job.result.success(true);
-      else job.result.error('TRANSCODE', failure?.message ?? '媒体转码失败', null);
+      else job.result.error('TRANSCODE', failure?.message ?? '媒体转码失败', (job.error as BusinessError | null)?.code ?? null);
     }
   }
 

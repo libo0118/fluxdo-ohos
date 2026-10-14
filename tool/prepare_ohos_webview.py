@@ -109,19 +109,34 @@ def prepare_sources(plugin, interface, support):
     shutil.copyfile(support, plugin / PLUGIN / 'FluxdoWebViewSecurity.ets')
 
 
-def prepare(repo):
-    lock = (repo / 'pubspec.lock').read_text(encoding='utf-8')
-    roots = []
+def verify_locked_webview(lock):
     for name in ['flutter_inappwebview_ohos', 'flutter_inappwebview_platform_interface']:
         block = re.search(r'(?m)^  ' + name + r':\n(?:(?:    .*|\s*)\n)*', lock)
-        if block is None or f'resolved-ref: "{WEBVIEW_REV}"' not in block[0]:
+        revision = None if block is None else re.search(
+            r'''(?m)^      resolved-ref: (["']?)([0-9a-f]{40})\1\s*$''', block[0])
+        if revision is None or revision[2] != WEBVIEW_REV:
             raise AssertionError(f'{name} must resolve to {WEBVIEW_REV}')
-        roots.append(package_root(repo, name))
+
+
+def prepare(repo):
+    verify_locked_webview((repo / 'pubspec.lock').read_text(encoding='utf-8'))
+    roots = [package_root(repo, name) for name in
+             ['flutter_inappwebview_ohos', 'flutter_inappwebview_platform_interface']]
     prepare_sources(*roots, repo / 'ohos_support/webview/FluxdoWebViewSecurity.ets')
     print('Prepared pinned OHOS WebView TLS and native cookie metadata')
 
 
 def self_test(source):
+    for quote in ['', '"', "'"]:
+        lock = ''.join(f'  {name}:\n    description:\n      resolved-ref: {quote}{WEBVIEW_REV}{quote}\n'
+                       for name in ['flutter_inappwebview_ohos', 'flutter_inappwebview_platform_interface'])
+        verify_locked_webview(lock)
+        try:
+            verify_locked_webview(lock.replace(WEBVIEW_REV, '0' * 40, 1))
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError('Incorrect source revision accepted')
     if source is None:
         raise AssertionError('--self-test requires --source-root pinned WebView source')
     support = Path(__file__).resolve().parent.parent / 'ohos_support/webview/FluxdoWebViewSecurity.ets'

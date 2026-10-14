@@ -226,7 +226,9 @@ Future<void> main() async {
   HighlighterService.instance.initialize(); // 不需要 await，后台初始化
 
   // 初始化本地通知服务（请求权限）
-  LocalNotificationService().initialize(); // 不需要 await，后台初始化
+  unawaited(LocalNotificationService().initialize().catchError((Object error) {
+    debugPrint('[Main] 通知初始化失败: $error');
+  }));
 
   // Android：临时关闭 WebView DevTools 调试，停用原生 CDP 链路
   if (Platform.isAndroid) {
@@ -869,6 +871,7 @@ class _MainPageState extends ConsumerState<MainPage>
   Timer? _pendingSingleTap;
   List<NavEntry> _lastResolvedEntries = const [];
   Timer? _resumeDebounceTimer;
+  int _backgroundLifecycleEpoch = 0;
   final BackExitGuard _backExitGuard = BackExitGuard();
   bool _clipboardCheckInFlight = false;
 
@@ -886,6 +889,9 @@ class _MainPageState extends ConsumerState<MainPage>
       // 标记应用已就绪（MainPage 在 PreheatGate 之后才挂载）
       ref.read(appReadyProvider.notifier).state = true;
       BrowserTrustCoordinator.instance.setNavigatorContext(context);
+      LocalNotificationService().navigationReady(
+        authenticated: ref.read(currentUserProvider).value != null,
+      );
 
       // 初始化 Deep Link 服务
       DeepLinkService.instance.initialize(context);
@@ -940,6 +946,15 @@ class _MainPageState extends ConsumerState<MainPage>
     ) {
       final previousUser = previous?.value;
       final user = next.value;
+      LocalNotificationService().setAuthenticated(user != null);
+      if (Platform.operatingSystem == 'ohos' && next.hasValue && previousUser != null && user == null) {
+        unawaited(BackgroundNotificationService().disable().catchError((Object error) {
+          debugPrint('[MainPage] 注销后台任务清理失败: $error');
+        }));
+        unawaited(LocalNotificationService().clearForLogout().catchError((Object error) {
+          debugPrint('[MainPage] 注销通知清理失败: $error');
+        }));
+      }
       if (previousUser == null && user != null) {
         BrowserTrustCoordinator.instance.startClearanceRefresh(
           reason: 'current_user_ready',
@@ -1167,6 +1182,13 @@ class _MainPageState extends ConsumerState<MainPage>
 
   @override
   void dispose() {
+    _backgroundLifecycleEpoch++;
+    if (Platform.operatingSystem == 'ohos') {
+      unawaited(BackgroundNotificationService().disable().catchError((Object error) {
+        debugPrint('[MainPage] 系统后台任务取消失败: $error');
+      }));
+    }
+    LocalNotificationService().navigationUnavailable();
     HardwareKeyboard.instance.removeHandler(_handlePresenceKeyEvent);
     WidgetsBinding.instance.removeObserver(this);
     _resumeDebounceTimer?.cancel();
@@ -1197,6 +1219,7 @@ class _MainPageState extends ConsumerState<MainPage>
     }
 
     if (state == AppLifecycleState.hidden) {
+      _backgroundLifecycleEpoch++;
       // hidden 比 paused 更早触发，在系统挂起 Dart isolate 之前启动前台服务
       // 取消待执行的 resume 操作（防止配置变更等假 resume）
       _resumeDebounceTimer?.cancel();
@@ -1204,6 +1227,13 @@ class _MainPageState extends ConsumerState<MainPage>
       _enterBackground();
       BrowserTrustCoordinator.instance.pauseForBackground();
     } else if (state == AppLifecycleState.resumed) {
+      _backgroundLifecycleEpoch++;
+      if (Platform.operatingSystem == 'ohos') {
+        // 在 debounce 之前使迟到的额度和到期事件失效。
+        unawaited(BackgroundNotificationService().disable().catchError((Object error) {
+          debugPrint('[MainPage] 系统后台任务取消失败: $error');
+        }));
+      }
       // 延迟执行，避免系统配置变更（主题切换等）触发的假 resume
       _resumeDebounceTimer?.cancel();
       _resumeDebounceTimer = Timer(const Duration(milliseconds: 500), () {
@@ -1235,9 +1265,16 @@ class _MainPageState extends ConsumerState<MainPage>
   }
 
   Future<void> _resumeFromBackground() async {
+    final epoch = _backgroundLifecycleEpoch;
     // App 回到前台 — 停止后台保活 + 恢复所有频道 + 刷新通知。
     try {
-      await BackgroundNotificationService().disable();
+      try {
+        await BackgroundNotificationService().disable();
+      } catch (error) {
+        if (Platform.operatingSystem != 'ohos') rethrow;
+        debugPrint('[MainPage] 系统后台任务取消失败: $error');
+      }
+      if (Platform.operatingSystem == 'ohos' && (!mounted || epoch != _backgroundLifecycleEpoch)) return;
       if (Platform.isIOS) {
         // iOS 后台轮询任务在独立 isolate 写 cookie 文件，回前台时重载
         // 磁盘值，避免主 isolate 用旧缓存覆盖后台轮换的 token
@@ -1254,6 +1291,7 @@ class _MainPageState extends ConsumerState<MainPage>
       } catch (e) {
         debugPrint('[MainPage] 回前台 _t 对账跳过: $e');
       }
+      if (Platform.operatingSystem == 'ohos' && (!mounted || epoch != _backgroundLifecycleEpoch)) return;
       MessageBusService().exitBackgroundMode();
       if (!mounted) return;
       ref.invalidate(notificationListProvider);
@@ -1265,7 +1303,9 @@ class _MainPageState extends ConsumerState<MainPage>
     } catch (e) {
       debugPrint('[MainPage] 恢复前台失败: $e');
     } finally {
-      BrowserTrustCoordinator.instance.resumeFromBackground(reason: 'resume');
+      if (Platform.operatingSystem != 'ohos' || (mounted && epoch == _backgroundLifecycleEpoch)) {
+        BrowserTrustCoordinator.instance.resumeFromBackground(reason: 'resume');
+      }
     }
   }
 
@@ -1331,6 +1371,7 @@ class _MainPageState extends ConsumerState<MainPage>
 
   /// App 进入后台：先启动前台服务保活，再切换到只轮询通知频道
   Future<void> _enterBackground() async {
+    final epoch = _backgroundLifecycleEpoch;
     // 清后台图片内存缓存按平台分派:
     // - 桌面端跳过——最小化即触发本回调,一次性并发销毁大量 GPU 贴图
     //   (SkImage_Ganesh/GrTextureProxy)疑撞 Skia disposal 问题
@@ -1350,6 +1391,11 @@ class _MainPageState extends ConsumerState<MainPage>
 
     try {
       final user = ref.read(currentUserProvider).value;
+      if (Platform.operatingSystem == 'ohos') {
+        await BackgroundNotificationService().enterOhosBackgroundMode(user?.id);
+        if (!mounted || epoch != _backgroundLifecycleEpoch) return;
+        return;
+      }
       if (user != null) {
         // 先启动前台服务，确保进程不被杀死
         await BackgroundNotificationService().enable(user.id);

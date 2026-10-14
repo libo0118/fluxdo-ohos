@@ -7,8 +7,10 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../l10n/s.dart';
+import '../services/public_file_channel.dart';
 import '../services/toast_service.dart';
 import 'platform_utils.dart';
+import 'image_transfer_utils.dart';
 import 'share_utils.dart';
 
 /// 「把这张图交给用户」的统一出口。
@@ -67,6 +69,18 @@ abstract final class ImageSaveUtils {
   /// 移动端：存进系统相册。
   static Future<bool> _saveToGallery(Uint8List bytes, String fileName) async {
     try {
+      if (PublicFileChannel.isOhos) {
+        final (data, extension) = await prepareSystemImage(bytes);
+        final targetName = p.setExtension(fileName, '.$extension');
+        final source = await ShareUtils.createOutboxFile(targetName);
+        await source.writeAsBytes(data);
+        final saved = await PublicFileChannel.saveImageToGallery(
+          sourcePath: source.path,
+          fileName: targetName,
+        );
+        if (saved) ToastService.showSuccess(S.current.share_imageSaved);
+        return saved;
+      }
       if (!await Gal.hasAccess() && !await Gal.requestAccess()) {
         ToastService.showInfo(S.current.imageViewer_grantPermission);
         return false;

@@ -32,7 +32,8 @@ class ShareOutcome {
   final String? displayName;
 
   /// [finalPath] 是 Android content uri 而非可 `File()` 打开的路径。
-  bool get isContentUri => finalPath?.startsWith('content://') ?? false;
+  bool get isContentUri =>
+      finalPath != null && PublicFileChannel.isContentUri(finalPath!);
 }
 
 /// 分享链接工具类
@@ -161,10 +162,29 @@ class ShareUtils {
   /// 与 [saveFile] 的分工：本方法只负责"发出去"，落地保存是另一个动作。
   /// Linux 上不可用，入口需先看 [canShareFiles]。
   static Future<ShareOutcome> shareFile(XFile file, {String? subject}) async {
+    if (PublicFileChannel.isOhos) {
+      return ShareOutcome(
+        shared: await PublicFileChannel.shareUri(file.path, mimeType: file.mimeType),
+      );
+    }
     await SharePlus.instance.share(
       ShareParams(files: [file], subject: subject),
     );
     return const ShareOutcome(shared: true);
+  }
+
+  static Future<void> shareText(String text, {String? subject}) async {
+    try {
+      if (PublicFileChannel.isOhos) {
+        final shown = await PublicFileChannel.shareText(text, subject: subject);
+        if (!shown) ToastService.showError(S.current.common_shareFailed);
+      } else {
+        await SharePlus.instance.share(ShareParams(text: text, subject: subject));
+      }
+    } catch (e) {
+      debugPrint('[ShareUtils] shareText failed: $e');
+      ToastService.showError(S.current.common_shareFailed);
+    }
   }
 
   /// 把文件落地保存到本机的「公共」位置。
@@ -180,6 +200,7 @@ class ShareUtils {
   ///
   /// 成功提示交给调用方（各入口的成功文案不同），失败提示在此统一给出。
   static Future<ShareOutcome> saveFile(XFile file) async {
+    if (PublicFileChannel.isOhos) return saveFileAs(file);
     if (PlatformUtils.isDesktop) {
       return _saveFileDialog(file, showSuccessToast: false);
     }
@@ -232,6 +253,11 @@ class ShareUtils {
           displayName: saved.displayName.isEmpty ? fileName : saved.displayName,
         );
       } catch (e) {
+        if (PublicFileChannel.isOhos) {
+          debugPrint('[ShareUtils] native saveAs failed: $e');
+          ToastService.showError(S.current.share_saveFailed);
+          return const ShareOutcome(shared: false);
+        }
         // 原生腿不可用（未注册/旧版本）才落到下面的 file_picker
         debugPrint('[ShareUtils] native saveAs unavailable, fallback: $e');
       }

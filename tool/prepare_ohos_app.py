@@ -5,6 +5,33 @@ import sys
 
 
 REPLACEMENTS = {
+    "lib/utils/share_utils.dart": [
+        ("""    final outputPath = await FilePicker.platform.saveFile(
+      dialogTitle: S.current.share_selectSaveLocation,
+      fileName: fileName,
+      type: ext.isNotEmpty ? FileType.custom : FileType.any,
+      allowedExtensions: ext.isNotEmpty ? [ext] : null,
+    );
+
+    if (outputPath == null) {
+      return const ShareOutcome(shared: false);
+    }
+
+    try {
+      final sourceFile = File(file.path);
+      await sourceFile.copy(outputPath);""",
+         """    try {
+      final outputPath = await FilePicker.platform.saveFile(
+        dialogTitle: S.current.share_selectSaveLocation,
+        fileName: fileName,
+        bytes: await File(file.path).readAsBytes(),
+        type: ext.isNotEmpty ? FileType.custom : FileType.any,
+        allowedExtensions: ext.isNotEmpty ? [ext] : null,
+      );
+      if (outputPath == null) {
+        return const ShareOutcome(shared: false);
+      }"""),
+    ],
     "lib/services/windows_protocol_registrar_io.dart": [
         ("Registry.currentUser.createKey(", "CURRENT_USER.create("),
         ("""    key.createValue(
@@ -90,8 +117,9 @@ if __name__ == "__main__":
     for relative_path, (expected, method, single) in picker_sites.items():
         path = repo / relative_path
         replacement = f"FilePicker.{method}(" + ("allowMultiple: false, " if single else "")
+        content = prepared[path] if path in prepared else path.read_bytes()
         prepared[path] = replace_once(
-            path.read_bytes(), f"FilePicker.platform.{method}(", replacement,
+            content, f"FilePicker.platform.{method}(", replacement,
             relative_path, expected,
         )
     for path, content in prepared.items():

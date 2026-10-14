@@ -366,6 +366,8 @@ class _MediaControlsOverlayState extends State<MediaControlsOverlay>
               enableVerticalGestures: widget.isFullscreen,
               positionProvider: () => _controller.value.position,
               durationProvider: () => _controller.value.duration,
+              playbackVolumeProvider: () => _controller.value.volume,
+              onPlaybackVolumeChanged: _controller.setVolume,
               onSeekPreview: (target, {required forward, required cancelArmed}) {
                 if (!mounted) return;
                 setState(() {

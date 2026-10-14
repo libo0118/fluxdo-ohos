@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:screen_brightness/screen_brightness.dart';
 import 'package:volume_controller/volume_controller.dart';
@@ -38,6 +39,8 @@ class MediaGestureLayer extends StatefulWidget {
     this.durationProvider,
     this.onSeekPreview,
     this.onSeekCommit,
+    this.playbackVolumeProvider,
+    this.onPlaybackVolumeChanged,
     this.child,
   });
 
@@ -69,6 +72,10 @@ class MediaGestureLayer extends StatefulWidget {
 
   /// 横滑松手提交。
   final ValueChanged<Duration>? onSeekCommit;
+
+  /// 鸿蒙 API 18 没有普通应用音量接口，回退到当前播放器真实音量。
+  final double Function()? playbackVolumeProvider;
+  final Future<void> Function(double)? onPlaybackVolumeChanged;
 
   final Widget? child;
 
@@ -106,6 +113,8 @@ class _MediaGestureLayerState extends State<MediaGestureLayer> {
   bool? _verticalIsVolume;
   double _verticalStartValue = 0;
   double _verticalAccum = 0;
+  bool _verticalUsesPlaybackVolume = false;
+  int _verticalGesture = 0;
   Timer? _hudHideTimer;
 
   bool get _verticalEnabled =>
@@ -197,15 +206,30 @@ class _MediaGestureLayerState extends State<MediaGestureLayer> {
     final width = context.size?.width ?? 0;
     if (width <= 0) return;
     final isVolume = details.localPosition.dx >= width / 2;
+    final gesture = ++_verticalGesture;
     _verticalAccum = 0;
+    _verticalUsesPlaybackVolume = false;
     try {
-      _verticalStartValue = isVolume
-          ? await VolumeController.instance.getVolume()
-          : await ScreenBrightness().application;
+      if (isVolume) {
+        try {
+          _verticalStartValue = await VolumeController.instance.getVolume();
+        } on PlatformException catch (error) {
+          if (defaultTargetPlatform.name != 'ohos' ||
+              error.code != 'unsupported' ||
+              widget.playbackVolumeProvider == null ||
+              widget.onPlaybackVolumeChanged == null) {
+            rethrow;
+          }
+          _verticalStartValue = widget.playbackVolumeProvider!();
+          _verticalUsesPlaybackVolume = true;
+        }
+      } else {
+        _verticalStartValue = await ScreenBrightness().application;
+      }
     } catch (_) {
       return; // 平台不支持(如模拟器)则本次手势静默失效
     }
-    if (!mounted) return;
+    if (!mounted || gesture != _verticalGesture) return;
     _verticalIsVolume = isVolume;
     _hudHideTimer?.cancel();
     widget.onVerticalAdjust?.call(isVolume, _verticalStartValue, true);
@@ -221,8 +245,12 @@ class _MediaGestureLayerState extends State<MediaGestureLayer> {
     final value = (_verticalStartValue + _verticalAccum).clamp(0.0, 1.0);
     widget.onVerticalAdjust?.call(isVolume, value, true);
     if (isVolume) {
-      VolumeController.instance.showSystemUI = false;
-      unawaited(VolumeController.instance.setVolume(value));
+      if (_verticalUsesPlaybackVolume) {
+        unawaited(widget.onPlaybackVolumeChanged!(value));
+      } else {
+        VolumeController.instance.showSystemUI = false;
+        unawaited(VolumeController.instance.setVolume(value));
+      }
     } else {
       unawaited(
           ScreenBrightness().setApplicationScreenBrightness(value));
@@ -230,6 +258,7 @@ class _MediaGestureLayerState extends State<MediaGestureLayer> {
   }
 
   void _endVertical() {
+    _verticalGesture++;
     final isVolume = _verticalIsVolume;
     if (isVolume == null) return;
     _verticalIsVolume = null;

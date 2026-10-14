@@ -84,7 +84,9 @@ class LocalNotificationService {
       if (call.method == 'notificationsChanged') {
         await _drainOhosTaps();
       } else if (call.method == 'backgroundExpired') {
-        BackgroundNotificationService().handleOhosExpired();
+        BackgroundNotificationService().handleOhosExpired(
+          call.arguments is int ? call.arguments as int : null,
+        );
       }
     });
     _permissionGranted = await _ohosChannel.invokeMethod<bool>('isEnabled') ?? false;

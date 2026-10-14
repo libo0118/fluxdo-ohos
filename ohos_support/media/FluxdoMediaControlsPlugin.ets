@@ -126,10 +126,10 @@ export default class FluxdoMediaControlsPlugin implements FlutterPlugin, MethodC
     this.pending = task.catch((): void => {});
   }
 
-  onListen(arguments: Object | null, sink: EventSink): void {
+  onListen(args: Object | null, sink: EventSink): void {
     this.sink = sink;
     if (deviceInfo.sdkApiVersion >= 19) this.volumeManager.on('appVolumeChange', this.volumeChanged);
-    const values = arguments as Map<string, Object> | null;
+    const values = args as Map<string, Object> | null;
     if (values?.get('fetchInitialVolume') !== false) {
       this.volume().then((value: number): void => sink.success(value)).catch((): void => {
         sink.error('media_control_error', '无法读取媒体音量。', null);
@@ -137,7 +137,7 @@ export default class FluxdoMediaControlsPlugin implements FlutterPlugin, MethodC
     }
   }
 
-  onCancel(arguments: Object | null): void {
+  onCancel(args: Object | null): void {
     this.sink = null;
     if (deviceInfo.sdkApiVersion >= 19) this.volumeManager.off('appVolumeChange', this.volumeChanged);
   }

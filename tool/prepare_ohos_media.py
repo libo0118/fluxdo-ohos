@@ -429,9 +429,11 @@ def patch_record(source):
 def patch_video(source):
     source = source.replace("\r\n", "\n")
     if NATIVE_MARKER in source:
-        source = replace_once(source,
-            "this.eventSink?.error('VideoError', '原生视频播放失败。', null);",
-            "this.eventSink?.error('VideoError', '原生视频播放失败。', {});")
+        for details in ['null', '{}']:
+            previous = "this.eventSink?.error('VideoError', '原生视频播放失败。', " + details + ");"
+            if previous in source:
+                source = replace_once(source, previous,
+                    "this.eventSink?.error('VideoError', '原生视频播放失败。', new Map<string, Object>());")
         if "setPlaybackRate(rate)" not in source:
             raise AssertionError("已有视频补丁不完整")
         return source
@@ -455,7 +457,7 @@ def patch_video(source):
     source = replace_once(source, "  setSpeed(playSpeed: number) {", "  setPlaybackRate(rate: number): void {\n"
         "    if (!Number.isFinite(rate) || rate < 0.125 || rate > 4) throw new Error('倍速无效');\n"
         "    this.avPlayer?.setPlaybackRate(rate);\n  }\n\n  setSpeed(playSpeed: number) {")
-    source = replace_region(source, "  sendError(error: Object): void {", "  getIUri(): string {", "  sendError(error: Object): void {\n    this.eventSink?.error('VideoError', '原生视频播放失败。', {});\n  }\n\n")
+    source = replace_region(source, "  sendError(error: Object): void {", "  getIUri(): string {", "  sendError(error: Object): void {\n    this.eventSink?.error('VideoError', '原生视频播放失败。', new Map<string, Object>());\n  }\n\n")
     # 单个 Flutter 视频结束时无需访问示例应用的全局播放列表。
     source = replace_region(source, "          if (!this.loop) {", "          break;\n        case AvplayerStatus.RELEASED:", "          if (!this.loop) this.pendingPlay = false;\n")
     return source
@@ -580,9 +582,10 @@ def self_test(source_root=None):
                 assert "REASON_OLD_DEVICE_UNAVAILABLE" in patched
                 assert patch_audio(patched.replace("REASON_OLD_DEVICE_UNAVAILABLE", "REASON_OLD_DEVICE_UNAVALIABLE")) == patched
             if patch is patch_video:
-                report = "this.eventSink?.error('VideoError', '原生视频播放失败。', {});"
+                report = "this.eventSink?.error('VideoError', '原生视频播放失败。', new Map<string, Object>());"
                 assert report in patched
-                assert patch_video(patched.replace(report, report.replace("{}", "null"))) == patched
+                for details in ['null', '{}']:
+                    assert patch_video(patched.replace(report, report.replace('new Map<string, Object>()', details))) == patched
             if patch is patch_record:
                 assert "getMaxAmplitudeForInputDevice" not in patched
                 assert "getAudioCapturerMaxAmplitude()" in patched

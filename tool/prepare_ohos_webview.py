@@ -11,6 +11,21 @@ from prepare_ohos_network import replace_once
 
 WEBVIEW_REV = 'a281ae3272a9218760d52b95014a71a41866bd6c'
 PLUGIN = Path('ohos/src/main/ets/components/plugin')
+COOKIE_RICH_LEGACY = '''    const rich = await FluxdoWebViewSecurity.cookiesForUrl(url);
+    if (rich != null) {
+      for (const cookie of rich) cookieListMap.add(cookie);
+      return cookieListMap;
+    }
+    // fetchCookieSync may throw BusinessError; callers must catch (onMethodCall does).'''
+COOKIE_RICH = '''    const rich: Array<Map<string, Object | null>> | null = await FluxdoWebViewSecurity.cookiesForUrl(url);
+    if (rich != null) {
+      for (let i = 0; i < rich.length; i++) {
+        const cookie: Map<string, Object | null> = rich[i];
+        cookieListMap.add(cookie);
+      }
+      return cookieListMap;
+    }
+    // fetchCookieSync may throw BusinessError; callers must catch (onMethodCall does).'''
 SSL_CALLBACK = '''  onSslErrorEvent = async (event: SslErrorEvent) => {
     try {
       const leaf = FluxdoWebViewSecurity.leafChallenge(event);
@@ -91,13 +106,10 @@ def prepare_sources(plugin, interface, support):
     cookie = plugin / PLUGIN / 'MyCookieManager.ets'
     change(cookie, "import ChannelResultUtil from './types/ChannelResultUtil';",
            "import ChannelResultUtil from './types/ChannelResultUtil';\nimport FluxdoWebViewSecurity from './FluxdoWebViewSecurity';")
-    change(cookie, '    // fetchCookieSync may throw BusinessError; callers must catch (onMethodCall does).',
-           '''    const rich = await FluxdoWebViewSecurity.cookiesForUrl(url);
-    if (rich != null) {
-      for (const cookie of rich) cookieListMap.add(cookie);
-      return cookieListMap;
-    }
-    // fetchCookieSync may throw BusinessError; callers must catch (onMethodCall does).''')
+    if COOKIE_RICH_LEGACY in cookie.read_text(encoding='utf-8'):
+        change(cookie, COOKIE_RICH_LEGACY, COOKIE_RICH)
+    else:
+        change(cookie, '    // fetchCookieSync may throw BusinessError; callers must catch (onMethodCall does).', COOKIE_RICH)
     proxy = plugin / PLUGIN / 'proxy/ProxyManager.ets'
     change(proxy, "import ProxyRuleExt from './ProxyRuleExt';",
            "import ProxyRuleExt from './ProxyRuleExt';\nimport FluxdoWebViewSecurity from '../FluxdoWebViewSecurity';")
@@ -164,6 +176,10 @@ def self_test(source):
         prepare_sources(plugin, interface, support)
         assert manifest.read_bytes() == manifest_before
         first = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob('*') if p.is_file()}
+        prepare_sources(plugin, interface, support)
+        assert first == {str(p.relative_to(root)): p.read_bytes() for p in root.rglob('*') if p.is_file()}
+        cookie = plugin / PLUGIN / 'MyCookieManager.ets'
+        cookie.write_text(cookie.read_text(encoding='utf-8').replace(COOKIE_RICH, COOKIE_RICH_LEGACY), encoding='utf-8')
         prepare_sources(plugin, interface, support)
         assert first == {str(p.relative_to(root)): p.read_bytes() for p in root.rglob('*') if p.is_file()}
         node = plugin / PLUGIN / 'webview/in_app_webview/WebNodeController.ets'

@@ -119,7 +119,7 @@ class _ExportSheetState extends ConsumerState<ExportSheet> {
     // 保存/另存为被用户取消（未选位置）时不写历史、不关闭 sheet
     final isSaving =
         delivery == ExportDelivery.save || delivery == ExportDelivery.saveAs;
-    if (isSaving && !result.shared) return;
+    if ((isSaving || PublicFileChannel.isOhos) && !result.shared) return;
     await ref
         .read(exportHistoryProvider.notifier)
         .add(
@@ -148,6 +148,8 @@ class _ExportSheetState extends ConsumerState<ExportSheet> {
           ? result.displayName!
           : p.basename(result.finalPath ?? '');
       ToastService.showSuccess(S.current.export_savedAs(name));
+    } else if (PublicFileChannel.isOhos) {
+      ToastService.showInfo(S.current.export_shareStarted);
     }
     if (mounted) Navigator.pop(context);
   }

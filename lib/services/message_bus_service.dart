@@ -72,6 +72,7 @@ class MessageBusService {
   bool _shouldStop = false;
   int _pollGeneration = 0; // 每次启动轮询递增,旧循环通过比对自动退出
   bool _backgroundMode = false;
+  bool _ohosBackgroundPaused = false;
   CancelToken? _currentCancelToken;
   int _failureCount = 0;
   int _totalPollCalls = 0; // 对齐官方 totalAjaxCalls,用于 __seq
@@ -101,6 +102,9 @@ class MessageBusService {
   MessageBusService._internal()
       : _clientId = ClientIdGenerator.generate(),
         _dio = _createPollingDio();
+
+  @visibleForTesting
+  MessageBusService.forTest(Dio dio) : _clientId = 'test-client', _dio = dio;
 
   /// 当前前台/后台轮询间隔(从 PreloadedDataService 读取站点设置)
   Duration get _callbackInterval {
@@ -250,7 +254,7 @@ class MessageBusService {
   }
 
   void _startPolling() {
-    if (_isPolling) return;
+    if (_isPolling || _ohosBackgroundPaused) return;
     _isPolling = true;
     _shouldStop = false;
     _pollGeneration++;
@@ -405,7 +409,7 @@ class MessageBusService {
         debugPrint('[MessageBus] 未知错误: $e');
         debugPrint('[MessageBus] $stack');
       } finally {
-        _currentCancelToken = null;
+        if (identical(_currentCancelToken, cancelToken)) _currentCancelToken = null;
       }
 
       if (_shouldStop || generation != _pollGeneration) break;
@@ -536,7 +540,7 @@ class MessageBusService {
           if (next == null) break;
           consumed = next.endOffset;
           if (next.payload.isNotEmpty) {
-            if (await _processChunk(next.payload)) gotData = true;
+            if (await _processChunk(next.payload, cancelToken: cancelToken)) gotData = true;
           }
         }
 
@@ -553,7 +557,7 @@ class MessageBusService {
     // 服务端 long_polling 25s 超时无数据时,返回的是 `[]` 而不会带分隔符。
     final tail = buffer.toString().trim();
     if (tail.isNotEmpty && !cancelToken.isCancelled) {
-      if (await _processChunk(tail)) gotData = true;
+      if (await _processChunk(tail, cancelToken: cancelToken)) gotData = true;
     }
 
     return gotData;
@@ -572,7 +576,7 @@ class MessageBusService {
     if (bytes.isEmpty) return false;
     final body = utf8.decode(bytes, allowMalformed: true).trim();
     if (body.isEmpty) return false;
-    return _processChunk(body);
+    return _processChunk(body, cancelToken: cancelToken);
   }
 
   /// 提取下一个 chunk 块,返回 `(payload, endOffset)`;无完整 chunk 时返回 null
@@ -610,7 +614,7 @@ class MessageBusService {
   static const int _isolateDecodeThreshold = 32 * 1024;
 
   /// 处理单个消息块,返回是否产生了实际的数据消息
-  Future<bool> _processChunk(String chunk) async {
+  Future<bool> _processChunk(String chunk, {CancelToken? cancelToken}) async {
     try {
       final parsed = chunk.length >= _isolateDecodeThreshold
           ? await compute(_decodeJsonChunk, chunk)
@@ -618,7 +622,7 @@ class MessageBusService {
               'MsgBusDecode',
               () => jsonDecode(chunk),
             );
-      if (parsed is! List) return false;
+      if (parsed is! List || cancelToken?.isCancelled == true || _ohosBackgroundPaused) return false;
       var got = false;
       for (final item in parsed) {
         if (item is Map<String, dynamic>) {
@@ -679,6 +683,7 @@ class MessageBusService {
   Timer? _deferredDrainTimer;
 
   void _scheduleDeferredDrain() {
+    if (_ohosBackgroundPaused) return;
     _deferredDrainTimer?.cancel();
     _deferredDrainTimer = Timer(
       const Duration(milliseconds: 400),
@@ -687,7 +692,7 @@ class MessageBusService {
   }
 
   void _drainDeferredMessages() {
-    if (_deferredMessages.isEmpty) return;
+    if (_deferredMessages.isEmpty || _ohosBackgroundPaused) return;
     if (ScrollBusySignal.isBusy) {
       _scheduleDeferredDrain();
       return;
@@ -727,10 +732,21 @@ class MessageBusService {
     );
   }
 
+  /// 鸿蒙短时任务结束后暂停请求，保留已有订阅和消息游标。
+  void pauseForOhosBackground() {
+    _backgroundMode = true;
+    _ohosBackgroundPaused = true;
+    _stopPolling();
+    _deferredDrainTimer?.cancel();
+    _deferredDrainTimer = null;
+  }
+
   /// 退出后台模式:取消当前等待立即重新轮询
   void exitBackgroundMode() {
     if (!_backgroundMode) return;
     _backgroundMode = false;
+    _ohosBackgroundPaused = false;
+    if (_deferredMessages.isNotEmpty) _scheduleDeferredDrain();
     _failureCount = 0;
     debugPrint('[MessageBus] 退出后台模式,立即恢复轮询');
     if (_isPolling) {
@@ -746,6 +762,9 @@ class MessageBusService {
   void stopAll() {
     _stopPolling();
     _subscriptions.clear();
+    _deferredDrainTimer?.cancel();
+    _deferredDrainTimer = null;
+    _deferredMessages.clear();
   }
 
   /// 释放资源

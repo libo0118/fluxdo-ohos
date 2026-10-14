@@ -1,9 +1,14 @@
+import 'dart:async';
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../l10n/s.dart';
 import '../pages/chat/channel/chat_channel_page.dart';
 import '../pages/topic_detail_page/topic_detail_page.dart';
 import '../utils/notification_navigation.dart';
+import 'background/background_notification_service.dart';
+import 'notification_tap_queue.dart';
 
 /// 全局 NavigatorKey，用于通知点击时导航
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -22,10 +27,25 @@ class LocalNotificationService {
   final FlutterLocalNotificationsPlugin _plugin = FlutterLocalNotificationsPlugin();
   bool _initialized = false;
   bool _permissionGranted = false;
+  static const _ohosChannel = MethodChannel('com.fluxdo/notifications');
+  bool get _isOhos => Platform.operatingSystem == 'ohos';
+  final _ohosTaps = NotificationTapQueue();
+  Future<void>? _initializingOhos;
+  Future<void>? _drainingTaps;
+  bool _tapDrainAgain = false;
+  bool _navigatorReady = false;
+  bool _authenticated = false;
+  bool _requestedOhosPermission = false;
+  int _tapSession = 0;
 
   /// 初始化通知服务
   Future<void> initialize() async {
     if (_initialized) return;
+    if (_isOhos) {
+      final initializing = _initializingOhos ??= _initializeOhos();
+      try { await initializing; } finally { _initializingOhos = null; }
+      return;
+    }
 
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
     const darwinSettings = DarwinInitializationSettings(
@@ -57,6 +77,101 @@ class LocalNotificationService {
     
     // 请求通知权限 (Android 13+)
     await _requestPermission();
+  }
+
+  Future<void> _initializeOhos() async {
+    _ohosChannel.setMethodCallHandler((call) async {
+      if (call.method == 'notificationsChanged') {
+        await _drainOhosTaps();
+      } else if (call.method == 'backgroundExpired') {
+        BackgroundNotificationService().handleOhosExpired();
+      }
+    });
+    _permissionGranted = await _ohosChannel.invokeMethod<bool>('isEnabled') ?? false;
+    _initialized = true;
+    await _drainOhosTaps();
+  }
+
+  /// MainPage 首帧之后才能弹系统权限窗口，点击还需等待登录态。
+  void navigationReady({required bool authenticated}) {
+    _navigatorReady = true;
+    _authenticated = authenticated;
+    _flushOhosTaps();
+    if (_isOhos) {
+      unawaited(_prepareOhosUi().catchError((Object error) {
+        debugPrint('[LocalNotification] 鸿蒙通知初始化失败: $error');
+      }));
+    }
+  }
+
+  Future<void> _prepareOhosUi() async {
+    await initialize();
+    if (!_requestedOhosPermission && _navigatorReady) {
+      _requestedOhosPermission = true;
+      _permissionGranted = await _ohosChannel.invokeMethod<bool>('requestPermission') ?? false;
+    } else {
+      _permissionGranted = await _ohosChannel.invokeMethod<bool>('isEnabled') ?? false;
+    }
+    await _drainOhosTaps();
+  }
+
+  void setAuthenticated(bool authenticated) {
+    _authenticated = authenticated;
+    if (_isOhos && authenticated) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _flushOhosTaps());
+    }
+  }
+
+  void navigationUnavailable() => _navigatorReady = false;
+
+  Future<void> clearForLogout() async {
+    if (!_isOhos) return;
+    _tapSession++;
+    _ohosTaps.clearPending();
+    await initialize();
+    await _ohosChannel.invokeMethod<void>('clearTaps');
+    await _ohosChannel.invokeMethod<void>('cancelAll');
+  }
+
+  Future<void> _drainOhosTaps() {
+    _tapDrainAgain = true;
+    return _drainingTaps ??= _readOhosTaps().whenComplete(() => _drainingTaps = null);
+  }
+
+  Future<void> _readOhosTaps() async {
+    do {
+      _tapDrainAgain = false;
+      final session = _tapSession;
+      final taps = await _ohosChannel.invokeListMethod<dynamic>('drainTaps') ?? const [];
+      if (session != _tapSession) continue;
+      for (final tap in taps) {
+        if (tap is Map && tap['payload'] is String && tap['token'] is String) {
+          _ohosTaps.add(tap['payload'] as String, token: tap['token'] as String);
+        }
+      }
+      _flushOhosTaps();
+    } while (_tapDrainAgain);
+  }
+
+  void _flushOhosTaps() {
+    final context = navigatorKey.currentContext;
+    for (final target in _ohosTaps.takeReady(
+      navigatorReady: _navigatorReady && context != null && context.mounted,
+      authenticated: _authenticated,
+    )) {
+      final page = target.kind == 'chat'
+          ? ChatChannelPage(channelId: target.id)
+          : TopicDetailPage(topicId: target.id, scrollToPostNumber: target.postNumber);
+      openNotificationPage(context!, page);
+    }
+  }
+
+  Future<void> _publishOhos({required int id, required String title, required String body,
+    String? payload, int? progress, bool alertOnce = false}) async {
+    _permissionGranted = await _ohosChannel.invokeMethod<bool>('publish', {
+      'id': id, 'title': title, 'body': body, 'payload': payload,
+      'progress': progress, 'alertOnce': alertOnce,
+    }) ?? false;
   }
 
   /// 通知点击回调
@@ -140,7 +255,7 @@ class LocalNotificationService {
       await initialize();
     }
 
-    if (!_permissionGranted) {
+    if (!_isOhos && !_permissionGranted) {
       debugPrint('[LocalNotification] 权限未授予，跳过通知');
       return;
     }
@@ -177,6 +292,10 @@ class LocalNotificationService {
           : '$prefix:$topicId';
     }
     
+    if (_isOhos) {
+      await _publishOhos(id: notificationId, title: title, body: body, payload: payload);
+      return;
+    }
     await _plugin.show(id: notificationId, title: title, body: body, notificationDetails: details, payload: payload);
     debugPrint('[LocalNotification] 已发送: $title, payload=$payload');
   }
@@ -193,6 +312,11 @@ class LocalNotificationService {
   }) async {
     if (!_initialized) {
       await initialize();
+    }
+    if (_isOhos) {
+      await _publishOhos(id: id, title: title, body: body ?? title,
+        progress: indeterminate ? null : progress, alertOnce: true);
+      return;
     }
     if (!_permissionGranted) return;
 
@@ -232,6 +356,10 @@ class LocalNotificationService {
     if (!_initialized) {
       await initialize();
     }
+    if (_isOhos) {
+      await _publishOhos(id: id, title: title, body: body);
+      return;
+    }
     if (!_permissionGranted) return;
 
     final androidDetails = AndroidNotificationDetails(
@@ -254,6 +382,11 @@ class LocalNotificationService {
 
   /// 取消指定通知
   Future<void> cancelNotification(int id) async {
+    if (_isOhos) {
+      await initialize();
+      await _ohosChannel.invokeMethod<void>('cancel', {'id': id});
+      return;
+    }
     await _plugin.cancel(id: id);
   }
 }

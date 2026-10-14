@@ -5,6 +5,7 @@ import 'dart:math' show Random;
 
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart' as inappwebview;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -877,6 +878,23 @@ class NetworkSettingsService {
   int? get _activeProxyPort => _rustProxyService.port;
 
   bool _webViewProxySet = false;
+  int _ohosWebViewProxyGeneration = 0;
+  int? _ohosWebViewProxyPort;
+
+  Future<bool> matchesOhosWebViewLeaf(String host, Uint8List leaf) async {
+    final generation = _ohosWebViewProxyGeneration;
+    final port = _ohosWebViewProxyPort;
+    bool current() => Platform.operatingSystem == 'ohos' && isGatewayMode &&
+        _webViewProxySet && port != null && port == _activeProxyPort &&
+        generation == _ohosWebViewProxyGeneration;
+    if (!current()) return false;
+    final matched = await _rustProxyService.matchesCurrentLeaf(host, leaf);
+    return matched && current();
+  }
+
+  bool get isOhosWebViewProxyActive => Platform.operatingSystem == 'ohos' &&
+      isGatewayMode && _webViewProxySet && _ohosWebViewProxyPort != null &&
+      _ohosWebViewProxyPort == _activeProxyPort;
 
   Future<void> _stopLocalProxyUnlessRequiredByWebView() async {
     var retainForWindowsWebView = false;
@@ -905,6 +923,35 @@ class NetworkSettingsService {
     if (!shouldRunLocalProxy) return;
     final port = _activeProxyPort;
     if (port == null) return;
+
+    if (Platform.operatingSystem == 'ohos') {
+      final generation = ++_ohosWebViewProxyGeneration;
+      _webViewProxySet = false;
+      _ohosWebViewProxyPort = null;
+      try {
+        const channel = MethodChannel('com.pichillilorenzo/flutter_inappwebview_proxycontroller');
+        final supported = await channel.invokeMethod<bool>('supportsFluxdoBoundLeaf');
+        if (generation != _ohosWebViewProxyGeneration || port != _activeProxyPort || !_rustProxyService.isRunning) return;
+        if (supported != true) {
+          // shortcut: API 18/19 lack a URL-bound certificate chain; retain direct ArkWeb connections.
+          await _clearWebViewProxy();
+          return;
+        }
+        await inappwebview.ProxyController.instance().setProxyOverride(
+          settings: inappwebview.ProxySettings(
+            proxyRules: [inappwebview.ProxyRule(url: 'http://127.0.0.1:$port')],
+          ),
+        );
+        if (generation == _ohosWebViewProxyGeneration && port == _activeProxyPort && _rustProxyService.isRunning) {
+          _webViewProxySet = true;
+          _ohosWebViewProxyPort = port;
+        }
+      } catch (e) {
+        if (generation == _ohosWebViewProxyGeneration) await _clearWebViewProxy();
+        debugPrint('[DOH] OHOS WebView 代理设置失败: $e');
+      }
+      return;
+    }
 
     if (Platform.isWindows) {
       try {
@@ -944,6 +991,18 @@ class NetworkSettingsService {
   }
 
   Future<bool> _clearWebViewProxy() async {
+    if (Platform.operatingSystem == 'ohos') {
+      ++_ohosWebViewProxyGeneration;
+      _webViewProxySet = false;
+      _ohosWebViewProxyPort = null;
+      try {
+        await inappwebview.ProxyController.instance().clearProxyOverride();
+        return true;
+      } catch (e) {
+        debugPrint('[DOH] OHOS WebView 代理清除失败: $e');
+        return false;
+      }
+    }
     if (Platform.isWindows) {
       try {
         final applied = await WindowsWebViewEnvironmentService.instance

@@ -1,7 +1,6 @@
 import deviceInfo from '@ohos.deviceInfo';
 import url from '@ohos.url';
 import webview from '@ohos.web.webview';
-import { Any } from '@ohos/flutter_ohos';
 
 export class FluxdoLeafChallenge {
   host: string;
@@ -31,11 +30,11 @@ export default class FluxdoWebViewSecurity {
 
   static leafChallenge(event: SslErrorEvent): FluxdoLeafChallenge | null {
     // shortcut: API <20 cannot bind the failing URL to its certificate chain; keep refusing exceptions.
-    if (!this.supportsBoundLeaf() || event.error != SslError.Untrusted) return null;
+    if (!FluxdoWebViewSecurity.supportsBoundLeaf() || event.error != SslError.Untrusted) return null;
     const chain = event.certChainData;
     if (chain == undefined || chain.length == 0 || chain[0].length == 0 || chain[0].length > 16384) return null;
     const parsed = new url.URL(event.url);
-    const host = this.dnsHost(parsed.hostname);
+    const host = FluxdoWebViewSecurity.dnsHost(parsed.hostname);
     if (parsed.protocol != 'https:' || parsed.username != '' || parsed.password != '' || host == null) return null;
     const port = parsed.port == '' ? 443 : Number(parsed.port);
     if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
@@ -43,7 +42,7 @@ export default class FluxdoWebViewSecurity {
     return new FluxdoLeafChallenge(host, port, new Uint8Array(chain[0]));
   }
 
-  static async cookiesForUrl(rawUrl: string): Promise<Array<Map<string, Any>> | null> {
+  static async cookiesForUrl(rawUrl: string): Promise<Array<Map<string, Object | null>> | null> {
     // shortcut: API <23 only exposes name/value; preserve the existing low-confidence session-cookie gate.
     if (deviceInfo.sdkApiVersion < 23) return null;
     const parsed = new url.URL(rawUrl);
@@ -51,7 +50,7 @@ export default class FluxdoWebViewSecurity {
     const host = parsed.hostname.toLowerCase();
     const path = parsed.pathname == '' ? '/' : parsed.pathname;
     const cookies = await webview.WebCookieManager.fetchAllCookies(false);
-    const result: Array<Map<string, Any>> = [];
+    const result: Array<Map<string, Object | null>> = [];
     for (const cookie of cookies) {
       const domain = cookie.domain.toLowerCase();
       const domainName = domain.startsWith('.') ? domain.slice(1) : domain;
@@ -61,7 +60,7 @@ export default class FluxdoWebViewSecurity {
       if (cookie.isSecure && parsed.protocol != 'https:') continue;
       const expiry = cookie.isSessionCookie ? null : Date.parse(cookie.expiresDate);
       if (expiry != null && (!Number.isFinite(expiry) || expiry <= Date.now())) continue;
-      const map: Map<string, Any> = new Map<string, Any>();
+      const map: Map<string, Object | null> = new Map<string, Object | null>();
       map.set('name', cookie.name);
       map.set('value', cookie.value);
       map.set('domain', cookie.domain);

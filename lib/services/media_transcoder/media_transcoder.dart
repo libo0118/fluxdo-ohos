@@ -1,8 +1,9 @@
 /// 媒体转码平台抽象(音视频压缩到站点 4MB 上限的执行层)。
 ///
-/// 三条实现腿(安装包零/近零增量,见 [[voice-media-upload-pipeline]]):
+/// 平台实现(安装包零/近零增量,见 [[voice-media-upload-pipeline]]):
 /// - iOS/macOS:AVAssetReader/Writer(系统框架,H264 videotoolbox 硬编);
 /// - Android:media3 Transformer(Java 库 ~1-2MB,底层系统 MediaCodec);
+/// - OHOS:系统 AVTranscoder(AAC/H264/H265，尺寸和码率压缩);
 /// - Windows/Linux:进程 ffmpeg(Windows 首用时从 npmmirror 镜像下载
 ///   缓存;Linux 用系统 ffmpeg)—— 见 ffmpeg_process_transcoder.dart。
 ///
@@ -92,7 +93,8 @@ abstract class MediaTranscoder {
   /// 可用性(Windows 未下载/Linux 未安装)由 [ensureReady] 惰性解决。
   static MediaTranscoder? forCurrentPlatform() {
     if (kIsWeb) return null;
-    if (Platform.isIOS || Platform.isMacOS || Platform.isAndroid) {
+    if (Platform.isIOS || Platform.isMacOS || Platform.isAndroid ||
+        Platform.operatingSystem == 'ohos') {
       return _ChannelTranscoder.instance;
     }
     if (Platform.isWindows || Platform.isLinux) {
@@ -118,7 +120,7 @@ abstract class MediaTranscoder {
   Future<void> cancel();
 }
 
-/// iOS/macOS/Android:MethodChannel 到原生实现。
+/// iOS/macOS/Android/OHOS:MethodChannel 到原生实现。
 class _ChannelTranscoder extends MediaTranscoder {
   _ChannelTranscoder._();
   static final instance = _ChannelTranscoder._();

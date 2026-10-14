@@ -1,5 +1,8 @@
 {
   "@@locale": "zh_TW",
+  "about_harmonyNoRelease": "暫無鴻蒙發佈版本",
+  "about_harmonyActionsContent": "目前鴻蒙建置可從 GitHub Actions 下載。未簽名 HAP 需要簽名後安裝。",
+  "about_openHarmonyBuilds": "查看鴻蒙建置",
   "about_appLogs": "應用日誌",
   "about_checkUpdate": "檢查更新",
   "about_checkUpdateError": "無法檢查更新，請稍後重試。\n錯誤資訊: {error}",

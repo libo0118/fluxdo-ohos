@@ -1,5 +1,8 @@
 {
   "@@locale": "en",
+  "about_harmonyNoRelease": "No HarmonyOS release yet",
+  "about_harmonyActionsContent": "HarmonyOS builds are available from GitHub Actions. Unsigned HAP files require signing before installation.",
+  "about_openHarmonyBuilds": "View HarmonyOS builds",
   "about_appLogs": "App logs",
   "about_checkUpdate": "Check for updates",
   "about_checkUpdateError": "Cannot check for updates.\nError: {error}",

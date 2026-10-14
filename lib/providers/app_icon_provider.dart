@@ -76,6 +76,10 @@ class AppIconNotifier extends StateNotifier<AppIconState> {
   }
 
   Future<void> _init() async {
+    if (!kIsWeb && Platform.operatingSystem == 'ohos') {
+      state = state.copyWith(currentStyle: AppIconStyle.classic);
+      return;
+    }
     var style = _styleFromSavedValue(_prefs.getString(_prefKey));
 
     if (!kIsWeb && Platform.isIOS) {
@@ -123,6 +127,7 @@ class AppIconNotifier extends StateNotifier<AppIconState> {
 
   Future<bool> _supportsAlternateIcons() async {
     if (kIsWeb) return false;
+    if (Platform.operatingSystem == 'ohos') return false;
     if (Platform.isIOS) {
       return (await _platformChannel.invokeMethod<bool>('supportsAlternateIcons')) ??
           false;
@@ -165,6 +170,10 @@ class AppIconNotifier extends StateNotifier<AppIconState> {
 
   /// 切换应用图标风格
   Future<bool> setIconStyle(AppIconStyle style) async {
+    if (!kIsWeb && Platform.operatingSystem == 'ohos') {
+      state = state.copyWith(currentStyle: AppIconStyle.classic, isChanging: false);
+      return style == AppIconStyle.classic;
+    }
     if (state.isChanging) return true;
     if (style == state.currentStyle && await _isPlatformIconApplied(style)) {
       return true;

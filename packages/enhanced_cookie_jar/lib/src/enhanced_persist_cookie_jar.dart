@@ -61,16 +61,20 @@ class EnhancedPersistCookieJar implements base.CookieJar {
   }) {
     if (cookies.isEmpty) return Future.value();
     return _synchronized(
-      () => _saveCanonicalCookiesLocked(uri, cookies, trusted: trusted),
+      () async {
+        await _saveCanonicalCookiesLocked(uri, cookies, trusted: trusted);
+      },
     );
   }
 
-  Future<void> _saveCanonicalCookiesLocked(
+  Future<bool> _saveCanonicalCookiesLocked(
     Uri uri,
     List<CanonicalCookie> cookies, {
     required bool trusted,
+    bool Function()? isCurrent,
   }) async {
     final all = [...await _readAll()];
+    if (isCurrent != null && !isCurrent()) return false;
     for (final cookie in cookies) {
       var resolved = cookie.copyWith(
         domain: cookie.domain ?? uri.host.toLowerCase(),
@@ -106,7 +110,9 @@ class EnhancedPersistCookieJar implements base.CookieJar {
         all.add(resolved);
       }
     }
+    if (isCurrent != null && !isCurrent()) return false;
     await _writeAll(all);
+    return true;
   }
 
   bool _isWebViewHostOnlyDowngrade(
@@ -230,6 +236,27 @@ class EnhancedPersistCookieJar implements base.CookieJar {
     await saveCanonicalCookies(uri, canonical, trusted: trusted);
   }
 
+  /// 会话校验必须在串行队列和磁盘读取之后，避免登出后旧快照重新落盘。
+  Future<bool> saveFromResponseGuarded(
+    Uri uri,
+    List<io.Cookie> cookies, {
+    required bool Function() isCurrent,
+    bool trusted = false,
+  }) {
+    if (cookies.isEmpty || !isCurrent()) return Future.value(false);
+    final canonical =
+        cookies.map((e) => SetCookieParser.fromIoCookie(e, uri: uri)).toList();
+    return _synchronized(() {
+      if (!isCurrent()) return Future.value(false);
+      return _saveCanonicalCookiesLocked(
+        uri,
+        canonical,
+        trusted: trusted,
+        isCurrent: isCurrent,
+      );
+    });
+  }
+
   @override
   Future<void> delete(Uri uri, [bool withDomainSharedCookie = false]) {
     return _synchronized(() async {
@@ -278,11 +305,14 @@ class EnhancedPersistCookieJar implements base.CookieJar {
   Future<int> replaceByNameForSite(
     Uri uri,
     String name,
-    List<CanonicalCookie> replacements,
-  ) {
+    List<CanonicalCookie> replacements, {
+    bool Function()? isCurrent,
+  }) {
     return _synchronized(() async {
+      if (isCurrent != null && !isCurrent()) return 0;
       final host = uri.host.toLowerCase();
       final all = [...await _readAll()];
+      if (isCurrent != null && !isCurrent()) return 0;
       final before = all.length;
 
       all.removeWhere((cookie) {
@@ -304,6 +334,7 @@ class EnhancedPersistCookieJar implements base.CookieJar {
 
       final removed = before - (all.length - deduped.length);
       if (removed > 0 || deduped.isNotEmpty) {
+        if (isCurrent != null && !isCurrent()) return 0;
         await _writeAll(all);
       }
       return removed;

@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:app_icons/app_icons.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:super_clipboard/super_clipboard.dart';
+import '../../utils/clipboard_utils.dart';
 import 'package:m3e_ui/m3e_ui.dart';
 import '../../providers/preferences_provider.dart';
 import '../../services/discourse/discourse_service.dart';
@@ -138,14 +138,7 @@ class _AiShareImagePreviewState extends ConsumerState<AiShareImagePreview> {
       final bytes = await _captureImage();
       if (bytes == null) throw Exception(S.current.share_screenshotFailed);
 
-      final clipboard = SystemClipboard.instance;
-      if (clipboard == null) {
-        ToastService.showError(S.current.common_clipboardUnavailable);
-        return;
-      }
-      final item = DataWriterItem();
-      item.add(Formats.png(bytes));
-      await clipboard.write([item]);
+      await ClipboardUtils.writeImage(bytes);
 
       if (mounted) {
         ToastService.showSuccess(S.current.share_imageCopied);

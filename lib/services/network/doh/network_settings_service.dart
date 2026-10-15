@@ -32,7 +32,7 @@ import 'cfhub_probe_auth_service.dart';
 import 'doh_resolver.dart';
 import 'webview_mitm_policy.dart';
 
-/// 本地动态优选的模式（只在 Android 网关模式下生效）
+/// 本地动态优选的模式（在 Android / OHOS 网关模式下生效）
 enum CfSelectMode {
   /// 本地优选一等：atlas 路由表的候选也参与竞速，赢家直接用
   localAtlas('local_atlas'),
@@ -53,6 +53,18 @@ enum CfSelectMode {
     return localAtlas;
   }
 }
+
+@visibleForTesting
+bool isCfSelectorEligible({
+  required String operatingSystem,
+  required bool dohEnabled,
+  required bool hasUpstreamProxy,
+  required bool gatewayMode,
+}) =>
+    (operatingSystem == 'android' || operatingSystem == 'ohos') &&
+    dohEnabled &&
+    !hasUpstreamProxy &&
+    gatewayMode;
 
 class NetworkSettings {
   const NetworkSettings({
@@ -350,18 +362,19 @@ class NetworkSettingsService {
       current.gatewayEnabled &&
       _rustProxyService.isRunning;
 
-  /// 本地动态优选只在 Android 网关模式下跑：DoH 开着、没有上游代理、网关开关开着
+  /// 本地动态优选在 Android / OHOS 网关模式下跑：DoH 开着、没有上游代理、网关开关开着
   /// （网关/上游的判断和 [_applyProxyState] 里启动代理时用的一致）
-  bool get selectorEligible =>
-      Platform.isAndroid &&
-      current.dohEnabled &&
-      !_proxyService.current.isValid &&
-      WebViewMitmPolicy.useGatewayMode(
-        isWindows: false,
-        dohEnabled: current.dohEnabled,
-        gatewayEnabled: current.gatewayEnabled,
-        webViewAdapterEnabled: WebViewAdapterSettingsService.instance.enabled,
-      );
+  bool get selectorEligible => isCfSelectorEligible(
+    operatingSystem: Platform.operatingSystem,
+    dohEnabled: current.dohEnabled,
+    hasUpstreamProxy: _proxyService.current.isValid,
+    gatewayMode: WebViewMitmPolicy.useGatewayMode(
+      isWindows: false,
+      dohEnabled: current.dohEnabled,
+      gatewayEnabled: current.gatewayEnabled,
+      webViewAdapterEnabled: WebViewAdapterSettingsService.instance.enabled,
+    ),
+  );
 
   /// 交给 Rust 的公共 DoH 种子：`[{'url': ..., 'bootstrap_ips': [...]}]`
   List<Map<String, Object>> get _publicDohSeeds => [
@@ -934,7 +947,7 @@ class NetworkSettingsService {
         dohRoutesUrl: dohRoutesUrl,
         dohRouteTableJson: dohRouteTableJson,
         dohNodeListJson: dohNodeListJson,
-        // 本地动态优选：只在 Android 网关模式下开；上次的赢家状态回灌给 Rust
+        // 本地动态优选：在 Android / OHOS 网关模式下开；上次的赢家状态回灌给 Rust
         selectMode: selectorEligible ? current.selectMode.wire : 'off',
         selectStateJson: prefsForSeed?.getString(_selectStateKey),
         shareMeasurements:

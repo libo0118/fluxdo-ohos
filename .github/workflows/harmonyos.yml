@@ -122,6 +122,7 @@ jobs:
           flutter create --platforms=ohos --org=com.github.molchuan --project-name=fluxdo --no-pub .
           python3 tool/prepare_ohos_identity.py
           mkdir -p assets/certs
+          python3 tool/prepare_ohos_network.py --self-test --doh-source core/doh_proxy
           python3 tool/prepare_ohos_network.py --stage before-pub-get
           python3 tool/prepare_ohos_media.py before-pub-get
           python3 tool/prepare_ohos_images.py --stage before-pub-get
@@ -175,6 +176,7 @@ jobs:
           python3 tool/prepare_ohos_enums.py
           dart test/services/cf_challenge_fallback_policy_check.dart 2>&1 | tee cf-fallback-ohos.log
           flutter test --no-pub test/services/system_proxy_detector_test.dart test/services/network/cookie/raw_cookie_writer_fallback_test.dart test/image_transfer_utils_test.dart test/services/notification_tap_queue_test.dart test/services/message_bus_ohos_background_test.dart test/services/ohos_webview_trust_test.dart test/services/network/cookie/ohos_cookie_boundary_test.dart test/services/ohos_update_service_test.dart 2>&1 | tee tests-ohos.log
+          flutter test --no-pub test/services/connectivity_signature_test.dart test/services/network/doh/cf_select_mode_test.dart test/services/network/doh/cf_select_notice_test.dart test/services/network/doh/cfhub_api_test.dart test/services/network/doh/cfhub_probe_auth_service_test.dart test/services/network/doh_proxy/doh_accel_update_test.dart test/services/network/network_health_controller_test.dart test/services/update_service_abi_test.dart test/utils/discourse_url_parser_test.dart test/utils/hashtag_handlers_test.dart 2>&1 | tee upstream-110-ohos.log
           dart test packages/enhanced_cookie_jar/test/guarded_cookie_save_test.dart 2>&1 | tee cookie-queue-ohos.log
       - name: Compile the original Flutter application to HAP
         run: |
@@ -200,7 +202,7 @@ jobs:
         if: always()
         run: |
           mkdir -p diagnostics
-          for log in setup-ohos.log pub-get-ohos.log storage-ohos.log transcode-ohos.log files-ohos.log notifications-ohos.log webview-ohos.log network-ohos.log image-ohos.log tests-ohos.log cf-fallback-ohos.log cookie-queue-ohos.log build-ohos.log; do
+          for log in setup-ohos.log pub-get-ohos.log storage-ohos.log transcode-ohos.log files-ohos.log notifications-ohos.log webview-ohos.log network-ohos.log image-ohos.log tests-ohos.log upstream-110-ohos.log cf-fallback-ohos.log cookie-queue-ohos.log build-ohos.log; do
             if [ -f "$log" ]; then
               printf '\n### %s\n\n```text\n' "$log" >> "$GITHUB_STEP_SUMMARY"
               tail -n 100 "$log" >> "$GITHUB_STEP_SUMMARY"

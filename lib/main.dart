@@ -1040,7 +1040,7 @@ class _MainPageState extends ConsumerState<MainPage>
   ///
   /// 版本标记写在最后：弹窗期间崩溃则下次重弹，保证用户一定看过说明。
   Future<void> _maybeShowCfSelectNotice() async {
-    if (!Platform.isAndroid) return;
+    if (!Platform.isAndroid && Platform.operatingSystem != 'ohos') return;
     final version = (await PackageInfo.fromPlatform()).version;
     final prefs = ref.read(sharedPreferencesProvider);
     final stored = prefs.getString(

@@ -14,6 +14,7 @@ import 'network/cookie/cookie_jar_service.dart';
 import 'network/cookie/session_token_lineage.dart';
 import 'local_notification_service.dart'; // 用于获取全局 navigatorKey
 import 'cf_challenge_logger.dart';
+import 'cf_challenge_fallback_policy.dart';
 import 'cf_clearance_refresh_service.dart';
 import 'embedded_browser_controller_pool.dart';
 import 'toast_service.dart';
@@ -972,6 +973,7 @@ class _CfChallengePageState extends State<CfChallengePage> {
   bool _hasSeenChallenge = false;
   bool _hideOriginFallbackPage = false;
   bool _checkingOriginFallback = false;
+  int _originFallbackProbeGeneration = 0;
   bool _originFallbackNeedsAction = false;
   bool _finishingFromVerifyResponse = false;
   int _loadGeneration = 0;
@@ -1561,6 +1563,7 @@ class _CfChallengePageState extends State<CfChallengePage> {
     if (_checkingOriginFallback) return;
 
     _checkingOriginFallback = true;
+    final probeGeneration = ++_originFallbackProbeGeneration;
     final isCompletionProbe = completionLikely || _hasSeenChallenge;
     // 取消其余探测路径：状态已经收敛到 fallback，避免重复 evaluateJavascript
     _challengeRevealProbeGeneration++;
@@ -1576,9 +1579,18 @@ class _CfChallengePageState extends State<CfChallengePage> {
           (isCompletionProbe
               ? _completionProbeTimeout
               : _noChallengeProbeTimeout)) {
-        if (_hasPopped || _finishingFromVerifyResponse) return;
+        if (_hasPopped ||
+            _finishingFromVerifyResponse ||
+            probeGeneration != _originFallbackProbeGeneration) {
+          return;
+        }
         if (!isCompletionProbe && generation != _loadGeneration) return;
         final cookieValue = await _readCookieValue('cf_clearance');
+        if (_hasPopped ||
+            _finishingFromVerifyResponse ||
+            probeGeneration != _originFallbackProbeGeneration) {
+          return;
+        }
         if (_isFreshClearance(cookieValue)) {
           debugPrint(
             '[CfChallenge] fallback/completion 期间检测到新 cf_clearance，自动完成',
@@ -1598,6 +1610,45 @@ class _CfChallengePageState extends State<CfChallengePage> {
               ? const Duration(milliseconds: 150)
               : const Duration(milliseconds: 400),
         );
+      }
+
+      final controller = _controller;
+      final hasActiveChallenge =
+          generation == _loadGeneration &&
+          controller != null &&
+          await _hasVisibleChallenge(controller);
+      if (!mounted ||
+          _hasPopped ||
+          _finishingFromVerifyResponse ||
+          probeGeneration != _originFallbackProbeGeneration) {
+        return;
+      }
+      final recoveryAction = decideCfChallengeFallback(
+        probeGeneration: generation,
+        loadGeneration: _loadGeneration,
+        hasActiveChallenge: _challengeWebViewVisible || hasActiveChallenge,
+      );
+      CfChallengeLogger.log(
+        '[VERIFY] Fallback recovery: ${recoveryAction.name}',
+        fields: {
+          'reason': reason,
+          'probeId': probeGeneration,
+          'probeLoadGeneration': generation,
+          'loadGeneration': _loadGeneration,
+          'hasActiveChallenge': _challengeWebViewVisible || hasActiveChallenge,
+        },
+      );
+      switch (recoveryAction) {
+        case CfChallengeFallbackAction.revealChallenge:
+          _revealChallengeWebView();
+          return;
+        case CfChallengeFallbackAction.checkCurrentPage:
+          if (_hasMarkedPageReady && controller != null) {
+            _scheduleNoChallengeCheck(controller);
+          }
+          return;
+        case CfChallengeFallbackAction.showNoChallenge:
+          break;
       }
 
       debugPrint('[CfChallenge] fallback/completion 结束仍无新 cf_clearance');
@@ -1621,11 +1672,13 @@ class _CfChallengePageState extends State<CfChallengePage> {
     } catch (e) {
       debugPrint('[CfChallenge] 处理 fallback 异常: $e');
     } finally {
-      _checkingOriginFallback = false;
-      if (mounted &&
-          !_hasPopped &&
-          (isCompletionProbe || generation == _loadGeneration)) {
-        setState(() {});
+      if (probeGeneration == _originFallbackProbeGeneration) {
+        _checkingOriginFallback = false;
+        if (mounted &&
+            !_hasPopped &&
+            (isCompletionProbe || generation == _loadGeneration)) {
+          setState(() {});
+        }
       }
     }
   }
@@ -1736,6 +1789,8 @@ class _CfChallengePageState extends State<CfChallengePage> {
 
   void _refresh() {
     if (!mounted) return;
+    _loadGeneration++;
+    _originFallbackProbeGeneration++;
     _timeoutTimer?.cancel();
     _noChallengeCheckTimer?.cancel();
     _loadStopFallbackTimer?.cancel();

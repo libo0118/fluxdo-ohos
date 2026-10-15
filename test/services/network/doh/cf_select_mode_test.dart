@@ -2,6 +2,40 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxdo/services/network/doh/network_settings_service.dart';
 
 void main() {
+  group('本地优选的平台和网关守卫', () {
+    bool eligible(
+      String operatingSystem, {
+      bool dohEnabled = true,
+      bool hasUpstreamProxy = false,
+      bool gatewayMode = true,
+    }) => isCfSelectorEligible(
+      operatingSystem: operatingSystem,
+      dohEnabled: dohEnabled,
+      hasUpstreamProxy: hasUpstreamProxy,
+      gatewayMode: gatewayMode,
+    );
+
+    test('Android 与 OHOS 启动优选，其余平台保持关闭', () {
+      expect(eligible('android'), isTrue);
+      expect(eligible('ohos'), isTrue);
+      for (final platform in ['ios', 'macos', 'windows', 'linux']) {
+        expect(eligible(platform), isFalse, reason: platform);
+      }
+    });
+
+    test('OHOS 关闭 DoH 时不启动优选', () {
+      expect(eligible('ohos', dohEnabled: false), isFalse);
+    });
+
+    test('OHOS 使用应用代理时不启动优选', () {
+      expect(eligible('ohos', hasUpstreamProxy: true), isFalse);
+    });
+
+    test('OHOS 关闭网关时不启动优选', () {
+      expect(eligible('ohos', gatewayMode: false), isFalse);
+    });
+  });
+
   group('CfSelectMode', () {
     test('wire 往返', () {
       expect(CfSelectMode.localAtlas.wire, 'local_atlas');

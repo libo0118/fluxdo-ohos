@@ -11,7 +11,7 @@ from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
 
 
-DOH_REV = "76977d77cfdd83085c7bf35fa906d3eff30827fd"
+DOH_REV = "03e0757336ee72f5800d6cb630fc8377a7cfba68"
 RHTTP_REV = "02eb4114b57c108e76a9ed526b6118bc048b5604"
 FRB_VERSION = "2.12.0"
 RHTTP_DEPENDENCY = """  rhttp:

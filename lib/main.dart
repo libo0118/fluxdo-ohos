@@ -28,6 +28,7 @@ import 'widgets/common/fullscreen_swipe_back.dart';
 import 'package:common_ui/common_ui.dart';
 import 'package:flutter_displaymode/flutter_displaymode.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'services/network/cookie/csrf_token_service.dart';
 import 'services/network/system_proxy_service.dart';
 import 'services/network/cookie/cookie_devtools_extension.dart';
@@ -42,6 +43,9 @@ import 'services/toast_service.dart';
 import 'package:m3e_ui/m3e_ui.dart';
 import 'l10n/s.dart';
 
+import 'pages/network_settings_page/widgets/cf_select_privacy_dialog.dart';
+import 'services/network/doh/cf_select_notice.dart';
+import 'services/network/doh/cfhub_probe_auth_service.dart';
 import 'services/network/doh/network_settings_service.dart';
 import 'services/network/proxy/proxy_settings_service.dart';
 import 'services/network/rhttp/rhttp_settings_service.dart';
@@ -201,7 +205,8 @@ Future<void> main() async {
   // Release 模式下禁用 debugPrint 输出：全项目有数百处 debugPrint 调试输出，
   // 它们在 release 下默认仍会写 logcat/console，徒增 I/O 开销。
   // 需要持久化的日志统一走 AppLogger（落盘到统一 JSONL）。
-  if (kReleaseMode) {
+  // 诊断包用 --dart-define=CFLUXDO_VERBOSE=true 构建可保留 debugPrint
+  if (kReleaseMode && !const bool.fromEnvironment('CFLUXDO_VERBOSE')) {
     debugPrint = (String? message, {int? wrapWidth}) {};
   }
 
@@ -1013,6 +1018,10 @@ class _MainPageState extends ConsumerState<MainPage>
   }
 
   Future<void> _runStartupUiTasks() async {
+    // 本地优选的隐私说明最先弹：它决定连接方式，且要避开更新弹窗叠弹。
+    await _maybeShowCfSelectNotice();
+    if (!mounted) return;
+
     // 启动弹窗先于剪贴板提示，避免 SnackBar 被弹窗遮挡后仍被记为已提示。
     await _autoCheckUpdate();
     if (!mounted) return;
@@ -1024,6 +1033,41 @@ class _MainPageState extends ConsumerState<MainPage>
     }
 
     await _checkClipboardTopicLink();
+  }
+
+  /// 1.1 起本地优选成为一等连接方式：大小版本号变化后的首次启动弹一次
+  /// 隐私说明；用户选「开启并帮助优选」则顺手走 cfhub 授权（失败按结果提示、保持关闭）。
+  ///
+  /// 版本标记写在最后：弹窗期间崩溃则下次重弹，保证用户一定看过说明。
+  Future<void> _maybeShowCfSelectNotice() async {
+    if (!Platform.isAndroid) return;
+    final version = (await PackageInfo.fromPlatform()).version;
+    final prefs = ref.read(sharedPreferencesProvider);
+    final stored = prefs.getString(
+      NetworkSettingsService.selectNoticeVersionKey,
+    );
+    if (!CfSelectNotice.shouldShow(
+      currentVersion: version,
+      storedVersion: stored,
+    )) {
+      return;
+    }
+    if (!mounted) return;
+
+    final enable = await showCfSelectPrivacyDialog(context, firstLaunch: true);
+    if (enable == true) {
+      try {
+        final result = await CfhubProbeAuthService.instance.enable();
+        showCfhubEnableResultToast(result);
+      } catch (e) {
+        debugPrint('[CfSelect] 首启开启帮助优选失败: $e');
+        ToastService.showError(S.current.common_shareFailed);
+      }
+    }
+    await prefs.setString(
+      NetworkSettingsService.selectNoticeVersionKey,
+      CfSelectNotice.majorMinor(version),
+    );
   }
 
   /// 上次进程疑似因 Mali/Vulkan 驱动崩溃时，建议开启渲染兼容模式。

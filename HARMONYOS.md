@@ -1,6 +1,8 @@
 # HarmonyOS 移植状态
 
-本 fork 基于 `1molchuan/fluxdo` 的 `61bf1da8290dc8cb335ece30c7cb4787c0c89af0`，复用原 Flutter 界面和业务代码，生成原生 HAP。包名保留 **`com.github.molchuan.cfluxdo`**，名称 **`cfluxdo`**，桌面图标取自原工程默认启用的经典 PNG。原作者信息和 GPL-3.0 许可保留。
+本 fork 同步上游稳定版 **1.1.0**（`1molchuan/fluxdo` 的 `3e5f61b3e43651d23d2aca187b45a6405202d911`），复用原 Flutter 界面和业务代码，生成原生 HAP。包名保留 **`com.github.molchuan.cfluxdo`**，名称 **`cfluxdo`**，桌面图标取自原工程默认启用的经典 PNG。原作者信息和 GPL-3.0 许可保留。
+
+默认连接沿用上游的“本地优选 + atlas”：从公共 DNS 和 atlas 获取候选节点，在设备上验证 ECH 与连通性；原 DoH 加速作为兜底。它不再依赖作者的 DoH 入口，但仍使用公共 DNS 和 ECH。应用代理开启或 DoH 总开关关闭时，不运行本地优选。“帮助优选”默认关闭，只有主动授权后才分享握手测量结果；既有 DoH 配置、账号与登录状态不主动清理。
 
 ## 构建与下载
 
@@ -13,7 +15,7 @@
 | 功能 | 实现与检查 | 设备边界 |
 | --- | --- | --- |
 | 账号、私钥与安全存储 | Asset Store 保存设备密钥，AES-GCM 加密分块偏好；已执行生产 ETS 的加解密/回滚检查 | 未做签名 HAP、重启及卸载迁移测试 |
-| DoH / ECH / HTTP3 | 构建真实 OHOS libdoh_proxy.so 和 librhttp.so，校验 AArch64、依赖和 ABI；每台设备 CA | 原生库已在云端成功构建；网络及 Cloudflare 仍待真机 |
+| 本地优选 / DoH / ECH / HTTP3 | 固定 DoH 原生源码 `03e0757336ee72f5800d6cb630fc8377a7cfba68`，构建真实 OHOS libdoh_proxy.so 和 librhttp.so；校验 AArch64、依赖及包含优选状态、重选、网络变化与可选分享的 ABI；每台设备 CA | 本次原生库与 HAP 构建以当前 Actions 结果为准；动态优选、网络切换与 Cloudflare 仍待真机 |
 | WebView 代理与 Cookie | API20+ 用失败事件 URL、Untrusted、首证书 DER 与当前代理缓存精确匹配。API23+ 读取真实 Cookie 属性；XHR/fetch 仅发空通知 | API18/19 保留直接网页连接，无法使用需要该证书例外的 WebView MITM；被网络阻断时可能失败。API18–22 保留原显式 CF/登录收口，自动低置信通知保守拒绝 |
 | 会话注销 | 自动同步只处理可信论坛 URL；注销代过滤登录 Cookie；队列内保存和规范化重新校验 | 等待初始化、队列及注销清理回归须以本次 Actions 结果为准 |
 | 动图 / AVIF | 构建真实 libnative_animated_image_codec.so、libflutter_avif.so；GIF/APNG/WebP 帧和 AVIF 原生代码 | 已在云端成功构建、运行真实 codec 回归；上游 WebP RGB 有已观测的 1 LSB 偏差；坏 AVIF 输入和设备显示待测 |

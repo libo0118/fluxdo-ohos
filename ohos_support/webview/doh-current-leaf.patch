@@ -222,7 +222,7 @@
          if config.gateway_mode && config.enable_doh {
 --- a/src/ffi.rs
 +++ b/src/ffi.rs
-@@ -738,3 +738,35 @@
+@@ -799,3 +799,35 @@
              .try_init();
      }
  }

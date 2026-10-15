@@ -6,7 +6,7 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 work="$repo/work/network-port"
 target=aarch64-unknown-linux-ohos
 rust_version=1.94.0
-doh_revision=76977d77cfdd83085c7bf35fa906d3eff30827fd
+doh_revision=03e0757336ee72f5800d6cb630fc8377a7cfba68
 mkdir -p "$work"
 export CARGO_HOME="$work/cargo-home"
 export RUSTUP_HOME="$work/rustup"
@@ -23,6 +23,9 @@ host="$(rustc "+$rust_version" -vV | sed -n 's/^host: //p')"
 (
   cd "$repo/core/doh_proxy"
   CARGO_TARGET_DIR="$work/host" cargo "+$rust_version" test --locked --lib --target "$host" ohos_leaf
+  CARGO_TARGET_DIR="$work/host" cargo "+$rust_version" test --locked --lib --target "$host" select::tests
+  CARGO_TARGET_DIR="$work/host" cargo "+$rust_version" test --locked --lib --target "$host" probe::tests
+  CARGO_TARGET_DIR="$work/host" cargo "+$rust_version" test --locked --lib --target "$host" proxy::tests
   CARGO_TARGET_DIR="$work/host" cargo "+$rust_version" run --locked --release --target "$host" --bin gen_ca
 )
 install -m 644 "$repo/core/doh_proxy/certs/ca.crt" "$repo/assets/certs/proxy_ca.pem"
@@ -64,7 +67,9 @@ for symbol in doh_proxy_start_with_config_json doh_proxy_stop doh_proxy_is_runni
     doh_proxy_record_host_success doh_proxy_clear_preferred_host_ip \
     doh_proxy_dns_cache_stats doh_proxy_dns_cache_records doh_proxy_generate_ca \
     doh_proxy_get_embedded_ca_pem doh_proxy_take_auth_rejected \
-    doh_proxy_take_accel_update doh_proxy_accel_request doh_proxy_free_string; do
+    doh_proxy_take_accel_update doh_proxy_accel_request doh_proxy_free_string \
+    doh_proxy_network_changed doh_proxy_select_status doh_proxy_select_rerace \
+    doh_proxy_set_share_measurements; do
   grep -Eq "^$symbol " "$work/libdoh_proxy.so.symbols.txt" || { echo "DoH 缺少 $symbol" >&2; exit 1; }
 done
 grep -Eq '^frb_get_rust_content_hash ' "$work/librhttp.so.symbols.txt"

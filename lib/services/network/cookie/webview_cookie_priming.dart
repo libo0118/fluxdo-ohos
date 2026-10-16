@@ -193,12 +193,7 @@ class WebViewCookiePriming {
           skippedExpired++;
           continue;
         }
-        // cf_clearance 单向流(WV→jar):它只会在 WebView 中由 CF 签发/更新,
-        // Dio 侧永远不产新值。jar→WV 回灌会经 toSetCookieHeader 丢失
-        // Partitioned 属性,把 CF 原生的分区 cookie 复制成一枚非分区副本
-        // → WebView 存储出现双变体(browser 侧从不会有)。因此回灌一律
-        // 跳过 cf_clearance,WebView 里永远只有 CF 自己写的那份。
-        if (initialCookie.name == 'cf_clearance') {
+        if (SessionCookieSentinel.isBrowserManagedCookie(initialCookie.name)) {
           continue;
         }
         // _t 只在血缘对账有明确结论时重灌（见 1.5）。
@@ -303,6 +298,7 @@ class WebViewCookiePriming {
       final currentJar = await _jar.loadCanonicalCookiesForRequest(uri);
       for (final cookie in currentJar) {
         if (cookie.value.isEmpty || _isExpired(cookie)) continue;
+        if (SessionCookieSentinel.isBrowserManagedCookie(cookie.name)) continue;
         final count = await _writer.countCookiesByName(url, cookie.name);
         if (count >= 1) {
           verified++;

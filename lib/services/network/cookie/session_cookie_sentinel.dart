@@ -32,6 +32,10 @@ class SessionCookieSentinel {
   static Set<String> get criticalCookieNames =>
       CookieJarService.criticalCookieNames;
 
+  /// CF 签发的浏览器状态不能通过 Jar 重建，常规维护必须保留原件。
+  static bool isBrowserManagedCookie(String name) =>
+      name == 'cf_clearance' || name.startsWith('cf_chl_');
+
   // ---------------------------------------------------------------------------
   // 可注入依赖（@visibleForTesting 用 setter 替换）
   // ---------------------------------------------------------------------------
@@ -152,12 +156,9 @@ class SessionCookieSentinel {
     return await Future.wait(futures);
   }
 
-  /// 触发 Nuclear Reset：清空 WV 中 url 适用域下所有 cookie + 从 jar 重灌 + 校验。
+  /// 重置业务 cookie；保留 CF 浏览器状态，不删除、回灌或校验其变体数。
   ///
-  /// 不再按 criticalCookieNames 过滤,全量处理:
-  /// - 先 nuke jar+WV 联合 name set 的所有 variant
-  /// - 从 jar 把适用 cookie 全量重灌
-  /// - 校验每个 jar cookie 在 WV 中变体数 ≤ 1
+  /// 对 Jar + WV 中的业务 cookie 清理变体、从 Jar 重灌并校验变体数 ≤ 1。
   Future<NuclearResetResult> nuclearReset(String url) async {
     final stopwatch = Stopwatch()..start();
     Duration? primingDuration;
@@ -181,6 +182,7 @@ class SessionCookieSentinel {
         debugPrint('[Sentinel] nuclearReset wv lookup failed: $e');
       }
       for (final name in namesToNuke) {
+        if (isBrowserManagedCookie(name)) continue;
         await _executeDelete(url, name);
       }
 
@@ -192,10 +194,7 @@ class SessionCookieSentinel {
             cookie.expiresAt!.isBefore(DateTime.now())) {
           continue;
         }
-        // cf_clearance 单向流(WV→jar):它只在 WebView 中由 CF 签发/更新,
-        // Dio 侧不产新值。回灌经 toSetCookieHeader 会丢 Partitioned,在 WV
-        // 里复制出一枚 CF 从未签发的非分区副本(双变体来源),一律不回写。
-        if (cookie.name == 'cf_clearance') continue;
+        if (isBrowserManagedCookie(cookie.name)) continue;
         // 用 toSetCookieHeader 保留 hostOnly/Domain/SameSite, 避免与 WV
         // 网络层写入的同名 cookie 共存 (详见 _writeWinnerToWebView 注释)
         await _writer.setRawCookie(
@@ -212,6 +211,7 @@ class SessionCookieSentinel {
       int? duplicatedCount;
       for (final cookie in jarCookies) {
         if (cookie.value.isEmpty) continue;
+        if (isBrowserManagedCookie(cookie.name)) continue;
         final count = await _writer.countCookiesByName(url, cookie.name);
         if (count > 1) {
           allOk = false;
@@ -299,6 +299,29 @@ class SessionCookieSentinel {
     }
 
     final variantsBefore = await _writer.countCookiesByName(url, name);
+
+    // CF 内部计数器的多变体不属于业务 cookie 冲突，不能因此重置整域。
+    if (name.startsWith('cf_chl_')) {
+      final result = SweepResult(
+        name: name,
+        status: SweepStatus.noop,
+        variantsBefore: variantsBefore,
+        variantsAfter: variantsBefore,
+        elapsed: stopwatch.elapsed,
+      );
+      _eventController.add(SweepCompleted(result: result));
+      CookieLogger.sweep(
+        event: 'noop',
+        url: url,
+        name: name,
+        intent: intent.name,
+        variantsBefore: variantsBefore,
+        variantsAfter: variantsBefore,
+        reason: 'browser_managed_challenge_cookie',
+        elapsedMs: stopwatch.elapsedMilliseconds,
+      );
+      return result;
+    }
 
     if (intent == SweepIntent.delete) {
       return await _sweepDelete(
@@ -1007,7 +1030,7 @@ enum SweepIntent {
 
 /// sweep 结果状态。
 enum SweepStatus {
-  /// 无需操作（variants 已满足前置条件）。
+  /// 无需操作（已满足前置条件，或由浏览器管理的 CF 内部 cookie）。
   noop,
 
   /// 已执行清理。
@@ -1038,7 +1061,7 @@ class SweepResult {
   final SweepStatus status;
   final int variantsBefore;
 
-  /// ensureUnique 时必然 ≤ 1；delete 时必然 == 0；除非 failed。
+  /// 业务 cookie：ensureUnique 时 ≤ 1；delete 时 == 0；除非 failed。
   final int variantsAfter;
 
   /// winner 来源：'jar' / 'webview' / null。

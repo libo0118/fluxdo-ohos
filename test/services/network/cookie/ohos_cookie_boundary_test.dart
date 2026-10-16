@@ -14,6 +14,8 @@ import 'package:fluxdo/services/network/cookie/cookie_jar_service.dart';
 import 'package:fluxdo/services/network/cookie/cookie_store_observer.dart';
 import 'package:fluxdo/services/network/cookie/raw_cookie_writer.dart';
 import 'package:fluxdo/services/network/cookie/session_cookie_sentinel.dart';
+import 'package:fluxdo/services/network/cookie/session_token_lineage.dart';
+import 'package:fluxdo/services/network/cookie/webview_cookie_priming.dart';
 import 'package:fluxdo/services/network/cookie/strategy/platform_cookie_strategy.dart';
 
 void main() {
@@ -280,6 +282,172 @@ void main() {
       await directory.delete(recursive: true);
     }
   });
+  for (final clearanceInJar in [false, true]) {
+    test(
+      'business reset preserves CF state (clearanceInJar=$clearanceInJar)',
+      () async {
+        final clearance = CookieFullInfo(
+          name: 'cf_clearance',
+          value: 'browser-issued',
+          isPartitioned: true,
+        );
+        final counters = [
+          CookieFullInfo(name: 'cf_chl_rc_ni', value: 'counter-a', path: '/'),
+          CookieFullInfo(
+            name: 'cf_chl_rc_ni',
+            value: 'counter-b',
+            path: '/challenge',
+          ),
+        ];
+        jar.canonicalCookies = [
+          SetCookieParser.fromIoCookie(
+            io.Cookie('theme', 'canonical'),
+            uri: uri,
+          ),
+          SetCookieParser.fromIoCookie(
+            io.Cookie('cf_chl_rc_ni', 'jar-counter'),
+            uri: uri,
+          ),
+          if (clearanceInJar)
+            SetCookieParser.fromIoCookie(
+              io.Cookie('cf_clearance', 'jar-copy'),
+              uri: uri,
+            ),
+        ];
+        rawWriter.cookies.addAll([
+          clearance,
+          ...counters,
+          CookieFullInfo(name: 'theme', value: 'old-a'),
+          CookieFullInfo(name: 'theme', value: 'old-b'),
+        ]);
+
+        final result = await SessionCookieSentinel.instance.nuclearReset(
+          uri.toString(),
+        );
+
+        expect(result.success, isTrue);
+        expect(rawWriter.cookies.where((c) => c.name == 'cf_clearance'), [
+          clearance,
+        ]);
+        expect(
+          rawWriter.cookies.where((c) => c.name == 'cf_chl_rc_ni'),
+          counters,
+        );
+        expect(rawWriter.deleted, ['theme']);
+        expect(rawWriter.written, ['theme']);
+        expect(
+          rawWriter.cookies.singleWhere((c) => c.name == 'theme').value,
+          'canonical',
+        );
+      },
+    );
+  }
+
+  test(
+    'routine sweep ignores browser challenge counters for both intents',
+    () async {
+      for (final name in ['cf_chl_rc_i', 'cf_chl_rc_ni', 'cf_chl_rc_m']) {
+        final variants = [
+          CookieFullInfo(name: name, value: 'first'),
+          CookieFullInfo(name: name, value: 'second'),
+        ];
+        rawWriter.cookies.addAll(variants);
+        for (final intent in SweepIntent.values) {
+          final result = await SessionCookieSentinel.instance.sweep(
+            uri.toString(),
+            name,
+            intent: intent,
+            force: true,
+          );
+          expect(result.status, SweepStatus.noop);
+          expect(result.variantsAfter, 2);
+        }
+        expect(rawWriter.cookies.where((c) => c.name == name), variants);
+      }
+      await SessionCookieSentinel.instance.sweepAll(uri.toString());
+      expect(rawWriter.deleted, isEmpty);
+      expect(rawWriter.written, isEmpty);
+    },
+  );
+
+  test('explicit clearance deletion still removes an invalid proof', () async {
+    rawWriter.cookies.add(
+      CookieFullInfo(name: 'cf_clearance', value: 'invalid'),
+    );
+    final result = await SessionCookieSentinel.instance.sweep(
+      uri.toString(),
+      'cf_clearance',
+      intent: SweepIntent.delete,
+    );
+    expect(result.status, SweepStatus.swept);
+    expect(rawWriter.cookies, isEmpty);
+    expect(rawWriter.deleted, ['cf_clearance']);
+  });
+
+  test(
+    'priming repairs business cookies without rebuilding CF state',
+    () async {
+      final priming = WebViewCookiePriming.instance;
+      final lineage = SessionTokenLineage.instance;
+      priming
+        ..resetForTest()
+        ..replaceDependenciesForTest(writer: rawWriter, jar: jar);
+      lineage
+        ..resetForTest()
+        ..replaceDependenciesForTest(writer: rawWriter, jar: jar);
+      try {
+        final cookies = [
+          io.Cookie('theme', 'canonical'),
+          io.Cookie('cf_clearance', 'jar-copy'),
+          io.Cookie('cf_chl_rc_ni', 'jar-counter'),
+        ];
+        await jar.cookieJar.saveFromResponse(uri, cookies);
+        jar.canonicalCookies = cookies
+            .map((c) => SetCookieParser.fromIoCookie(c, uri: uri))
+            .toList();
+        final clearance = CookieFullInfo(
+          name: 'cf_clearance',
+          value: 'browser-issued',
+        );
+        final counter = CookieFullInfo(
+          name: 'cf_chl_rc_ni',
+          value: 'browser-counter',
+        );
+        rawWriter.cookies.addAll([clearance, counter]);
+
+        await priming.prime(uri.toString());
+
+        expect(priming.isPrimed, isTrue);
+        expect(rawWriter.cookies.where((c) => c.name == 'cf_clearance'), [
+          clearance,
+        ]);
+        expect(rawWriter.cookies.where((c) => c.name == 'cf_chl_rc_ni'), [
+          counter,
+        ]);
+        expect(rawWriter.deleted, isNot(contains('cf_clearance')));
+        expect(rawWriter.deleted, isNot(contains('cf_chl_rc_ni')));
+        expect(rawWriter.written, ['theme']);
+        expect(
+          rawWriter.cookies.singleWhere((c) => c.name == 'theme').value,
+          'canonical',
+        );
+      } finally {
+        priming
+          ..resetForTest()
+          ..replaceDependenciesForTest(
+            writer: RawCookieWriter.instance,
+            jar: CookieJarService(),
+          );
+        lineage
+          ..resetForTest()
+          ..replaceDependenciesForTest(
+            writer: RawCookieWriter.instance,
+            jar: CookieJarService(),
+          );
+        CookieStoreObserver.instance.resetForTest();
+      }
+    },
+  );
 }
 
 class _DelayedPolicyJar extends EnhancedPersistCookieJar {
@@ -337,6 +505,7 @@ class _TestJar implements CookieJarService {
   bool initialized = true;
   Future<void> Function()? beforeInitialize;
   int policyCalls = 0;
+  List<CanonicalCookie> canonicalCookies = [];
 
   @override
   bool get isInitialized => initialized;
@@ -363,7 +532,10 @@ class _TestJar implements CookieJarService {
   }
 
   @override
-  Future<List<CanonicalCookie>> loadCanonicalCookiesForRequest(Uri uri) async => [];
+  Future<List<CanonicalCookie>> loadCanonicalCookiesForRequest(Uri uri) async => canonicalCookies;
+
+  @override
+  Future<String?> getTToken() async => null;
 
   @override
   Future<int> enforceAuthCookiePolicy({
@@ -422,12 +594,49 @@ class _TestController implements InAppWebViewController {
 
 class _TestRawWriter implements RawCookieWriter {
   final List<String> readUrls = [];
+  final List<CookieFullInfo> cookies = [];
+  final List<String> deleted = [];
+  final List<String> written = [];
 
   @override
   Future<List<CookieFullInfo>> getAllCookieInfos(String url) async {
     readUrls.add(url);
-    return [];
+    return List.of(cookies);
   }
+
+  @override
+  Future<int> countCookiesByName(String url, String name) async =>
+      cookies.where((cookie) => cookie.name == name).length;
+
+  @override
+  Future<int> nukeAllVariants({
+    required String url,
+    required String name,
+    required List<String?> domainCandidates,
+    required List<String> pathCandidates,
+  }) async {
+    deleted.add(name);
+    // The captured OHOS store kept both internal counter variants after delete.
+    if (name.startsWith('cf_chl_')) return 0;
+    final count = cookies.length;
+    cookies.removeWhere((cookie) => cookie.name == name);
+    return count - cookies.length;
+  }
+
+  @override
+  Future<bool> setRawCookie(
+    String url,
+    String rawSetCookie, {
+    bool writeSharedStorage = true,
+  }) async {
+    final cookie = io.Cookie.fromSetCookieValue(rawSetCookie);
+    written.add(cookie.name);
+    if (cookie.name.startsWith('cf_chl_')) return true;
+    cookies.removeWhere((existing) => existing.name == cookie.name);
+    cookies.add(CookieFullInfo.fromIoCookie(cookie));
+    return true;
+  }
+
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
